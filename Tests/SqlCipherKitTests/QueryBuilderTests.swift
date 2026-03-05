@@ -149,8 +149,12 @@ struct ExpressionTests {
 
     @Test("column compare (JOIN ON)")
     func columnCompare() {
+        let users = TableName("users")
+        let orders = TableName("orders")
+        let u = users.alias("u")
+        let o = orders.alias("o")
         var ctx = RenderContext()
-        let sql = (col("u", "id") == col("o", "user_id")).render(into: &ctx)
+        let sql = (col("id").of(u) == col("user_id").of(o)).render(into: &ctx)
         #expect(sql == "u.id = o.user_id")
         #expect(ctx.bindings.isEmpty)
     }
@@ -227,11 +231,11 @@ struct SelectRenderingTests {
 
     @Test("left join")
     func leftJoin() {
+        let users = TableName("users")
+        let orders = TableName("orders")
         let q = Select(.all)
-            .from("users")
-            .join(
-                TableName("orders"), type: .left, on: col("users", "id") == col("orders", "user_id")
-            )
+            .from(users)
+            .join(orders, type: .left, on: col("id").of(users) == col("user_id").of(orders))
             .build()
         #expect(q.sql.contains("LEFT JOIN"))
     }
@@ -370,7 +374,7 @@ struct QueryBuilderIntegrationTests {
             base: base,
             recursive: rec)
 
-        let q = Select(.all).from(TableName("ancestors")).with(cte)
+        let q = Select(.all).from(ancestors).with(cte)
         let rows = try await db.query(q, rootId.set(1))
 
         #expect(rows.count == 3)
