@@ -1,0 +1,12 @@
+// Custom module map for CSqlCipher.
+//
+// We use "sqlcipher.h" as the sole umbrella header rather than letting SPM
+// auto-generate a map from all headers in this directory.  This ensures Swift
+// sees the sqlite3_key / sqlite3_rekey declarations that sqlcipher.h adds
+// unconditionally, without also directly importing sqlite3.h on its own
+// (which would miss those declarations since SQLITE_HAS_CODEC is absent when
+// the Swift compiler reads headers).
+module CSqlCipher {
+    umbrella header "sqlcipher.h"
+    export *
+}
