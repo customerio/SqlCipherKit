@@ -122,10 +122,15 @@ private enum StatementHandle {
     case owned(OpaquePointer)
 
     var pointer: OpaquePointer {
-        switch self { case .cached(let p), .owned(let p): return p }
+        switch self {
+        case .cached(let p), .owned(let p): return p
+        }
     }
 
-    var isCached: Bool { if case .cached = self { return true }; return false }
+    var isCached: Bool {
+        if case .cached = self { return true }
+        return false
+    }
 
     /// Called when the statement is no longer in use.
     ///
@@ -135,12 +140,16 @@ private enum StatementHandle {
     ///   handle is ready for the next use without holding table locks.
     func done() {
         switch self {
-        case .owned(let p):  sqlite3_finalize(p)
-        case .cached(let p): sqlite3_reset(p); sqlite3_clear_bindings(p)
+        case .owned(let p): sqlite3_finalize(p)
+        case .cached(let p):
+            sqlite3_reset(p)
+            sqlite3_clear_bindings(p)
         }
     }
 
-    static func prepare(sql: String, db: OpaquePointer, cache: StatementCache) throws -> StatementHandle {
+    static func prepare(sql: String, db: OpaquePointer, cache: StatementCache) throws
+        -> StatementHandle
+    {
         if let p = try cache.cachedStatement(for: sql) { return .cached(p) }
         var stmt: OpaquePointer?
         let rc = sqlite3_prepare_v2(db, sql, -1, &stmt, nil)
@@ -275,6 +284,68 @@ public struct Connection: ~Copyable {
     }
 }
 
+// MARK: - BuiltQuery overloads
+
+extension Connection {
+
+    // MARK: Execute
+
+    /// Executes a pre-built query that produces no result rows.
+    public func execute(_ query: BuiltQuery) throws {
+        try _execute(query)
+    }
+
+    // MARK: Query
+
+    /// Executes a pre-built query and returns all matching rows.
+    public func query(_ query: BuiltQuery) throws -> [Row] {
+        try _query(query)
+    }
+
+    // MARK: Scalar
+
+    /// Executes a pre-built query and returns the first column of the first row.
+    public func scalarQuery<T: SQLConvertible>(_ query: BuiltQuery, as type: T.Type = T.self) throws
+        -> T?
+    {
+        try _scalarQuery(query, as: T.self)
+    }
+
+    // MARK: Internal array-based BuiltQuery entries
+
+    func _execute(_ query: BuiltQuery) throws {
+        let stmt = try StatementHandle.prepare(sql: query.sql, db: db, cache: cache)
+        defer { stmt.done() }
+        try bindNamed(stmt.pointer, query.bindings)
+        let rc = sqlite3_step(stmt.pointer)
+        if rc == SQLITE_SCHEMA, stmt.isCached { cache.evict(query.sql) }
+        guard rc == SQLITE_DONE || rc == SQLITE_ROW else {
+            throw SqlCipherError.stepFailed(message: String(cString: sqlite3_errmsg(db)))
+        }
+    }
+
+    func _query(_ query: BuiltQuery) throws -> [Row] {
+        let stmt = try StatementHandle.prepare(sql: query.sql, db: db, cache: cache)
+        defer { stmt.done() }
+        try bindNamed(stmt.pointer, query.bindings)
+        return try collectRows(stmt.pointer, sql: query.sql)
+    }
+
+    func _scalarQuery<T: SQLConvertible>(_ query: BuiltQuery, as type: T.Type = T.self) throws -> T?
+    {
+        let stmt = try StatementHandle.prepare(sql: query.sql, db: db, cache: cache)
+        defer { stmt.done() }
+        try bindNamed(stmt.pointer, query.bindings)
+        let rc = sqlite3_step(stmt.pointer)
+        if rc == SQLITE_SCHEMA, stmt.isCached { cache.evict(query.sql) }
+        if rc != SQLITE_ROW && rc != SQLITE_DONE {
+            throw SqlCipherError.stepFailed(message: String(cString: sqlite3_errmsg(db)))
+        }
+        guard rc == SQLITE_ROW else { return nil }
+        return T.from(sqlValue: readValue(stmt.pointer, column: 0))
+    }
+}
+
 // MARK: - Private helpers
 
 extension Connection {
@@ -293,7 +364,34 @@ extension Connection {
                 rc = sqlite3_bind_text(stmt, idx, s, -1, SQLITE_TRANSIENT_SHIM)
             case .blob(let d):
                 rc = d.withUnsafeBytes { ptr in
-                    sqlite3_bind_blob(stmt, idx, ptr.baseAddress, Int32(ptr.count), SQLITE_TRANSIENT_SHIM)
+                    sqlite3_bind_blob(
+                        stmt, idx, ptr.baseAddress, Int32(ptr.count), SQLITE_TRANSIENT_SHIM)
+                }
+            }
+            guard rc == SQLITE_OK else {
+                throw SqlCipherError.bindFailed(index: idx, code: rc)
+            }
+        }
+    }
+
+    func bindNamed(_ stmt: OpaquePointer, _ values: [String: any SQLConvertible]) throws {
+        for (name, val) in values {
+            let idx = sqlite3_bind_parameter_index(stmt, ":\(name)")
+            guard idx != 0 else { continue }  // param not used in this query — skip silently
+            let rc: Int32
+            switch val.sqlValue {
+            case .null:
+                rc = sqlite3_bind_null(stmt, idx)
+            case .integer(let n):
+                rc = sqlite3_bind_int64(stmt, idx, n)
+            case .real(let d):
+                rc = sqlite3_bind_double(stmt, idx, d)
+            case .text(let s):
+                rc = sqlite3_bind_text(stmt, idx, s, -1, SQLITE_TRANSIENT_SHIM)
+            case .blob(let d):
+                rc = d.withUnsafeBytes { ptr in
+                    sqlite3_bind_blob(
+                        stmt, idx, ptr.baseAddress, Int32(ptr.count), SQLITE_TRANSIENT_SHIM)
                 }
             }
             guard rc == SQLITE_OK else {
@@ -343,7 +441,7 @@ extension Connection {
             if count == 0 { return .blob(Data()) }
             let ptr = sqlite3_column_blob(stmt, column)!
             return .blob(Data(bytes: ptr, count: count))
-        default: // SQLITE_NULL
+        default:  // SQLITE_NULL
             return .null
         }
     }
