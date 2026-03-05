@@ -255,6 +255,56 @@ struct RowDecoderDateTests {
     }
 }
 
+// MARK: - Date.timeIntervalSince1970 timezone independence
+
+/// Verifies that `Date.timeIntervalSince1970` is UTC-based and not affected by
+/// the device's local timezone.  `Date` is an absolute point in time; it has no
+/// timezone property.  `timeIntervalSince1970` always measures seconds from
+/// 1970-01-01T00:00:00Z regardless of the system timezone setting.
+///
+/// The test constructs dates from known UTC ISO 8601 strings and asserts that
+/// `timeIntervalSince1970` equals the expected UTC seconds.  If the API were
+/// timezone-sensitive the values would differ by the local UTC offset.
+@Suite("Date.timeIntervalSince1970 – timezone independence")
+struct DateEpochTimezoneTests {
+    /// 1970-01-01T01:00:00Z is exactly 3600 seconds after the Unix epoch.
+    /// No matter what timezone the device is in, the result must be 3600.
+    @available(macOS 10.12, iOS 10.0, tvOS 10.0, watchOS 3.0, *)
+    @Test("one hour after epoch is always 3600 seconds")
+    func oneHourAfterEpoch() {
+        let fmt = ISO8601DateFormatter()
+        let date = fmt.date(from: "1970-01-01T01:00:00Z")!
+        #expect(date.timeIntervalSince1970 == 3600.0)
+    }
+
+    /// 2001-01-01T00:00:00Z (Swift/Apple reference date) is exactly
+    /// 978,307,200 seconds after the Unix epoch.  This is the value of
+    /// `Date.timeIntervalBetween1970AndReferenceDate` and confirms the
+    /// two epoch constants are consistent with UTC arithmetic.
+    @available(macOS 10.12, iOS 10.0, tvOS 10.0, watchOS 3.0, *)
+    @Test("reference date is 978307200 seconds after Unix epoch")
+    func referenceDateOffset() {
+        let fmt = ISO8601DateFormatter()
+        let referenceDate = fmt.date(from: "2001-01-01T00:00:00Z")!
+        #expect(referenceDate.timeIntervalSince1970 == 978_307_200.0)
+        #expect(referenceDate.timeIntervalSince1970 == Date.timeIntervalBetween1970AndReferenceDate)
+    }
+
+    /// A date decoded from a stored value of 0 via `.secondsSince1970`
+    /// must equal 1970-01-01T00:00:00Z, not the local midnight.
+    @available(macOS 10.12, iOS 10.0, tvOS 10.0, watchOS 3.0, *)
+    @Test("stored 0 decodes as Unix epoch, not local midnight")
+    func storedZeroIsUnixEpoch() throws {
+        struct W: Decodable { let ts: Date }
+        let decoder = RowDecoder()
+        decoder.dateDecodingStrategy = .secondsSince1970
+        let r = row(("ts", .real(0)))
+        let result = try decoder.decode(W.self, from: r)
+        let fmt = ISO8601DateFormatter()
+        #expect(fmt.string(from: result.ts) == "1970-01-01T00:00:00Z")
+    }
+}
+
 // MARK: - Unit tests: CodingKeys mapping
 
 @Suite("RowDecoder – CodingKeys mapping")
