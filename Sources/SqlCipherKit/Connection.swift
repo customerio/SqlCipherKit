@@ -346,6 +346,39 @@ extension Connection {
     }
 }
 
+// MARK: - DDL / DML convenience overloads
+
+extension Connection {
+
+    // MARK: CreateTable
+
+    /// Builds and executes a ``CreateTable`` statement.
+    public func execute(_ create: CreateTable) throws {
+        try _execute(create.build())
+    }
+
+    // MARK: AlterTable
+
+    /// Builds and executes an ``AlterTable`` statement.
+    public func execute(_ alter: AlterTable) throws {
+        try _execute(alter.build())
+    }
+
+    // MARK: Insert
+
+    /// Builds and executes an ``Insert`` statement with variadic ``ParamBinding`` values.
+    public func execute(_ insert: Insert, _ params: ParamBinding...) throws {
+        try _execute(insert.build(params: params))
+    }
+
+    // MARK: Update
+
+    /// Builds and executes an ``Update`` statement with variadic ``ParamBinding`` values.
+    public func execute(_ update: Update, _ params: ParamBinding...) throws {
+        try _execute(update.build(params: params))
+    }
+}
+
 // MARK: - Private helpers
 
 extension Connection {

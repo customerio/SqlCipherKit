@@ -385,3 +385,369 @@ struct QueryBuilderIntegrationTests {
         #expect(names == ["child", "grandchild", "root"])
     }
 }
+
+// MARK: - ColumnDefinition rendering tests
+
+@Suite("ColumnDefinition")
+struct ColumnDefinitionTests {
+
+    @Test("basic column renders type")
+    func basicType() {
+        let def = ColumnDefinition("score", .real)
+        #expect(def.render() == "score REAL")
+    }
+
+    @Test("autoIncrement constraint")
+    func autoIncrement() {
+        let def = ColumnDefinition("id", .integer, .autoIncrement)
+        #expect(def.render() == "id INTEGER PRIMARY KEY AUTOINCREMENT")
+    }
+
+    @Test("multiple constraints")
+    func multipleConstraints() {
+        let def = ColumnDefinition("email", .text, .notNull, .unique)
+        #expect(def.render() == "email TEXT NOT NULL UNIQUE")
+    }
+
+    @Test("default integer value")
+    func defaultInt() {
+        let def = ColumnDefinition("qty", .integer, .notNull, .default(0))
+        #expect(def.render() == "qty INTEGER NOT NULL DEFAULT 0")
+    }
+
+    @Test("default text value is quoted")
+    func defaultText() {
+        let def = ColumnDefinition("status", .text, .default("active"))
+        #expect(def.render() == "status TEXT DEFAULT 'active'")
+    }
+
+    @Test("default text with single quote is escaped")
+    func defaultTextEscaped() {
+        let def = ColumnDefinition("label", .text, .default("it's here"))
+        #expect(def.render() == "label TEXT DEFAULT 'it''s here'")
+    }
+
+    @Test("check constraint")
+    func checkConstraint() {
+        let def = ColumnDefinition("score", .real, .check("score >= 0 AND score <= 100"))
+        #expect(def.render() == "score REAL CHECK (score >= 0 AND score <= 100)")
+    }
+
+    @Test("foreign key reference")
+    func foreignKey() {
+        let groups = TableName("groups")
+        let def = ColumnDefinition("group_id", .integer, .references(groups, column: "id"))
+        #expect(def.render() == "group_id INTEGER REFERENCES groups(id)")
+    }
+}
+
+// MARK: - CreateTable rendering tests
+
+@Suite("CreateTable")
+struct CreateTableTests {
+
+    @Test("IF NOT EXISTS is default")
+    func ifNotExists() {
+        let users = TableName("users")
+        let q = CreateTable(users)
+            .column("id", .integer, .autoIncrement)
+            .build()
+        #expect(q.sql.hasPrefix("CREATE TABLE IF NOT EXISTS users"))
+        #expect(q.bindings.isEmpty)
+    }
+
+    @Test("without IF NOT EXISTS guard")
+    func withoutGuard() {
+        let t = TableName("tmp")
+        let q = CreateTable(t, ifNotExists: false)
+            .column("n", .integer)
+            .build()
+        #expect(q.sql.hasPrefix("CREATE TABLE tmp"))
+        #expect(!q.sql.contains("IF NOT EXISTS"))
+    }
+
+    @Test("all column types render")
+    func allTypes() {
+        let t = TableName("types")
+        let q = CreateTable(t)
+            .column("a", .integer)
+            .column("b", .text)
+            .column("c", .real)
+            .column("d", .blob)
+            .column("e", .numeric)
+            .build()
+        for ty in ["INTEGER", "TEXT", "REAL", "BLOB", "NUMERIC"] {
+            #expect(q.sql.contains(ty))
+        }
+    }
+
+    @Test("accepts pre-built ColumnDefinition")
+    func prebuiltDef() {
+        let t = TableName("items")
+        let def = ColumnDefinition("price", .real, .notNull, .default(0.0))
+        let q = CreateTable(t).column(def).build()
+        #expect(q.sql.contains("price REAL NOT NULL DEFAULT 0.0"))
+    }
+}
+
+// MARK: - AlterTable rendering tests
+
+@Suite("AlterTable")
+struct AlterTableTests {
+
+    @Test("rename table")
+    func renameTable() {
+        let old = TableName("users")
+        let q = AlterTable(old, renameTo: "people").build()
+        #expect(q.sql == "ALTER TABLE users RENAME TO people")
+        #expect(q.bindings.isEmpty)
+    }
+
+    @Test("rename column")
+    func renameColumn() {
+        let t = TableName("users")
+        let q = AlterTable(t, renameColumn: "email", to: "email_address").build()
+        #expect(q.sql == "ALTER TABLE users RENAME COLUMN email TO email_address")
+    }
+
+    @Test("add column")
+    func addColumn() {
+        let t = TableName("users")
+        let q = AlterTable(t, addColumn: "bio", .text, .notNull).build()
+        #expect(q.sql == "ALTER TABLE users ADD COLUMN bio TEXT NOT NULL")
+    }
+
+    @Test("add column with prebuilt definition")
+    func addColumnPrebuilt() {
+        let t = TableName("users")
+        let def = ColumnDefinition("score", .real, .default(0.0))
+        let q = AlterTable(t, addColumn: def).build()
+        #expect(q.sql == "ALTER TABLE users ADD COLUMN score REAL DEFAULT 0.0")
+    }
+}
+
+// MARK: - Insert rendering tests
+
+@Suite("Insert")
+struct InsertTests {
+
+    @Test("literal values use positional placeholders")
+    func literals() {
+        let users = TableName("users")
+        let q = Insert(into: users)
+            .set(col("name"), to: "Alice")
+            .set(col("score"), to: 9.5)
+            .build()
+        #expect(q.sql == "INSERT INTO users (name, score) VALUES (:_0, :_1)")
+        #expect((q.bindings["_0"] as? String) == "Alice")
+        #expect((q.bindings["_1"] as? Double) == 9.5)
+    }
+
+    @Test("named params stay constant across calls")
+    func namedParams() {
+        let users = TableName("users")
+        let nameParam = Param<String>("name")
+        let scoreParam = Param<Double>("score")
+
+        let insert = Insert(into: users)
+            .set(col("name"), to: nameParam)
+            .set(col("score"), to: scoreParam)
+
+        let q1 = insert.build(params: nameParam.set("Alice"), scoreParam.set(9.5))
+        let q2 = insert.build(params: nameParam.set("Bob"), scoreParam.set(7.0))
+
+        // SQL is identical — good for the statement cache
+        #expect(q1.sql == q2.sql)
+        #expect(q1.sql == "INSERT INTO users (name, score) VALUES (:name, :score)")
+        #expect((q1.bindings["name"] as? String) == "Alice")
+        #expect((q2.bindings["name"] as? String) == "Bob")
+    }
+
+    @Test("OR IGNORE conflict resolution")
+    func orIgnore() {
+        let t = TableName("items")
+        let q = Insert(into: t, onConflict: .ignore)
+            .set(col("id"), to: 1)
+            .build()
+        #expect(q.sql.hasPrefix("INSERT OR IGNORE INTO items"))
+    }
+
+    @Test("OR REPLACE conflict resolution")
+    func orReplace() {
+        let t = TableName("items")
+        let q = Insert(into: t, onConflict: .replace)
+            .set(col("id"), to: 1)
+            .build()
+        #expect(q.sql.hasPrefix("INSERT OR REPLACE INTO items"))
+    }
+}
+
+// MARK: - Update rendering tests
+
+@Suite("Update")
+struct UpdateTests {
+
+    @Test("single column with literal")
+    func singleLiteral() {
+        let users = TableName("users")
+        let id = col("id")
+        let q = Update(users)
+            .set(col("name"), to: "Alice")
+            .where(id == 1)
+            .build()
+        #expect(q.sql.contains("UPDATE users"))
+        #expect(q.sql.contains("SET name = :_0"))
+        #expect(q.sql.contains("WHERE id = :_1"))
+        #expect((q.bindings["_0"] as? String) == "Alice")
+        #expect((q.bindings["_1"] as? Int) == 1)
+    }
+
+    @Test("named params - same SQL different values")
+    func namedParams() {
+        let users = TableName("users")
+        let nameParam = Param<String>("name")
+        let idParam = Param<Int>("id")
+
+        let update = Update(users)
+            .set(col("name"), to: nameParam)
+            .where(col("id") == idParam)
+
+        let q1 = update.build(params: nameParam.set("Alice"), idParam.set(1))
+        let q2 = update.build(params: nameParam.set("Bob"), idParam.set(2))
+
+        #expect(q1.sql == q2.sql)
+        #expect(q1.sql == "UPDATE users\nSET name = :name\nWHERE id = :id")
+        #expect((q1.bindings["name"] as? String) == "Alice")
+        #expect((q2.bindings["name"] as? String) == "Bob")
+    }
+
+    @Test("update without WHERE renders correctly")
+    func noWhere() {
+        let t = TableName("settings")
+        let q = Update(t).set(col("value"), to: "dark").build()
+        #expect(!q.sql.contains("WHERE"))
+    }
+
+    @Test("multiple SET columns")
+    func multipleColumns() {
+        let t = TableName("users")
+        let q = Update(t)
+            .set(col("name"), to: "Alice")
+            .set(col("score"), to: 10.0)
+            .build()
+        #expect(q.sql.contains("name = :_0, score = :_1"))
+    }
+}
+
+// MARK: - DDL/DML integration tests
+
+@Suite("DDL and DML integration")
+struct DDLDMLIntegrationTests {
+
+    @Test("CreateTable and Insert round-trip")
+    func createAndInsert() async throws {
+        let path = NSTemporaryDirectory() + "ddl_test_\(Int.random(in: 1_000_000...9_999_999)).db"
+        defer { try? FileManager.default.removeItem(atPath: path) }
+
+        let db = try Database(path: path, key: "ddl-test")
+        let users = TableName("users")
+        let name = col("name")
+        let email = col("email")
+
+        try await db.execute(
+            CreateTable(users)
+                .column("id", .integer, .autoIncrement)
+                .column("name", .text, .notNull)
+                .column("email", .text, .notNull, .unique)
+        )
+
+        let nameParam = Param<String>("name")
+        let emailParam = Param<String>("email")
+
+        let insert = Insert(into: users)
+            .set(name, to: nameParam)
+            .set(email, to: emailParam)
+
+        try await db.execute(insert, nameParam.set("Alice"), emailParam.set("alice@example.com"))
+        try await db.execute(insert, nameParam.set("Bob"), emailParam.set("bob@example.com"))
+
+        let rows = try await db.query(Select(.all).from(users))
+        #expect(rows.count == 2)
+        #expect(rows[0]["name"] == .text("Alice"))
+        #expect(rows[1]["name"] == .text("Bob"))
+    }
+
+    @Test("Update with named params modifies correct row")
+    func updateNamedParam() async throws {
+        let path = NSTemporaryDirectory() + "upd_test_\(Int.random(in: 1_000_000...9_999_999)).db"
+        defer { try? FileManager.default.removeItem(atPath: path) }
+
+        let db = try Database(path: path, key: "upd-test")
+        let items = TableName("items")
+
+        try await db.execute("CREATE TABLE items (id INTEGER PRIMARY KEY, label TEXT, qty INTEGER)")
+        try await db.execute("INSERT INTO items VALUES (1, 'apple',  5)")
+        try await db.execute("INSERT INTO items VALUES (2, 'banana', 3)")
+
+        let qtyParam = Param<Int>("qty")
+        let idParam = Param<Int>("id")
+
+        let update = Update(items)
+            .set(col("qty"), to: qtyParam)
+            .where(col("id") == idParam)
+
+        try await db.execute(update, qtyParam.set(10), idParam.set(1))
+        try await db.execute(update, qtyParam.set(7), idParam.set(2))
+
+        let appleQty = try await db.scalarQuery(
+            Select(col("qty")).from(items).where(col("id") == 1), as: Int.self)
+        let bananaQty = try await db.scalarQuery(
+            Select(col("qty")).from(items).where(col("id") == 2), as: Int.self)
+
+        #expect(appleQty == 10)
+        #expect(bananaQty == 7)
+    }
+
+    @Test("AlterTable adds column visible in subsequent query")
+    func alterAddColumn() async throws {
+        let path = NSTemporaryDirectory() + "alt_test_\(Int.random(in: 1_000_000...9_999_999)).db"
+        defer { try? FileManager.default.removeItem(atPath: path) }
+
+        let db = try Database(path: path, key: "alt-test")
+        let users = TableName("users")
+
+        try await db.execute("CREATE TABLE users (id INTEGER PRIMARY KEY, name TEXT)")
+        try await db.execute("INSERT INTO users VALUES (1, 'Alice')")
+
+        try await db.execute(AlterTable(users, addColumn: "score", .real, .default(0.0)))
+
+        let rows = try await db.query(Select(.all).from(users))
+        #expect(rows.count == 1)
+        #expect(rows[0]["score"] == .real(0.0))
+    }
+
+    @Test("Insert OR IGNORE skips duplicate")
+    func insertOrIgnore() async throws {
+        let path = NSTemporaryDirectory() + "ins_test_\(Int.random(in: 1_000_000...9_999_999)).db"
+        defer { try? FileManager.default.removeItem(atPath: path) }
+
+        let db = try Database(path: path, key: "ins-test")
+        let tokens = TableName("tokens")
+
+        try await db.execute(
+            CreateTable(tokens)
+                .column("value", .text, .primaryKey)
+        )
+
+        let insert = Insert(into: tokens, onConflict: .ignore)
+            .set(col("value"), to: Param<String>("v"))
+        let v = Param<String>("v")
+
+        try await db.execute(insert, v.set("tok-abc"))
+        try await db.execute(insert, v.set("tok-abc"))  // duplicate — ignored, no throw
+
+        let count = try await db.scalarQuery(
+            Select(col("COUNT(*)")).from(tokens), as: Int.self)
+        #expect(count == 1)
+    }
+}
