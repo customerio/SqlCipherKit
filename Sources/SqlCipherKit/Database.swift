@@ -57,13 +57,19 @@ public actor Database {
     /// Opens or creates an encrypted database at `path`.
     ///
     /// - Parameters:
-    ///   - path: Filesystem path for the database file.
-    ///   - key:  Passphrase passed through PBKDF2-HMAC-SHA512 (SqlCipher default).
+    ///   - path:    Filesystem path for the database file.
+    ///   - key:     Passphrase passed through PBKDF2-HMAC-SHA512 (SqlCipher default).
+    ///   - walMode: When `true` (the default), sets `PRAGMA journal_mode=WAL`
+    ///              immediately after opening.  WAL provides better read/write
+    ///              concurrency and faster writes than the default rollback
+    ///              journal.  The setting is stored in the database file, so it
+    ///              only needs to be applied once per database; subsequent opens
+    ///              can pass `false` if preferred.
     ///
     /// - Throws: ``SqlCipherError/openFailed(message:)`` when the file cannot
     ///   be opened, or ``SqlCipherError/keyFailed(code:)`` when the key is
     ///   rejected (wrong key for an existing database).
-    public init(path: String, key: String) throws {
+    public init(path: String, key: String, walMode: Bool = true) throws {
         var db: OpaquePointer?
         let openRC = sqlite3_open(path, &db)
         guard openRC == SQLITE_OK, let opened = db else {
@@ -90,6 +96,18 @@ public actor Database {
         guard validationRC == SQLITE_OK else {
             sqlite3_close(opened)
             throw SqlCipherError.keyFailed(code: validationRC)
+        }
+
+        if walMode {
+            // PRAGMA journal_mode returns a row with the resulting mode name.
+            // We execute it and discard the result — any failure here is
+            // non-fatal (e.g. read-only filesystem), so we don't throw.
+            var walStmt: OpaquePointer?
+            if sqlite3_prepare_v2(opened, "PRAGMA journal_mode=WAL", -1, &walStmt, nil) == SQLITE_OK
+            {
+                sqlite3_step(walStmt)
+            }
+            if let s = walStmt { sqlite3_finalize(s) }
         }
 
         self.handle = opened
