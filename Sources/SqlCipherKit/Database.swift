@@ -64,7 +64,7 @@ public actor Database {
     /// is only ever accessed from within the actor's executor.
     private nonisolated(unsafe) let statementCache: StatementCache
 
-    // MARK: - TableRecord configuration
+    // MARK: - Entity configuration
 
     /// Strategy used to encode and decode complex Swift properties —
     /// arrays, dictionaries, and nested `Codable` structs — that cannot be

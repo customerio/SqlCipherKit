@@ -1,10 +1,10 @@
 import Foundation
 
-// MARK: - Database: TableRecord persistence
+// MARK: - Database: Entity persistence
 
 extension Database {
 
-    /// Saves a single `TableRecord` to the database and returns the (possibly updated) record.
+    /// Saves a single `Entity` to the database and returns the (possibly updated) record.
     ///
     /// The exact SQL depends on the primary key value at the time of the call:
     ///
@@ -28,13 +28,13 @@ extension Database {
     /// - Returns: A copy of `record` with its primary key set to the assigned
     ///   value (relevant only for auto-increment `Int?` PKs; otherwise
     ///   identical to the input).
-    /// - Throws: ``TableRecordError`` or ``SqlCipherError``.
+    /// - Throws: ``EntityError`` or ``SqlCipherError``.
     @discardableResult
-    public func save<T: TableRecord>(_ record: T) throws -> T {
+    public func save<T: Entity>(_ record: T) throws -> T {
         try _save(record)
     }
 
-    /// Saves an array of `TableRecord` values inside a single transaction.
+    /// Saves an array of `Entity` values inside a single transaction.
     ///
     /// All records are saved atomically: if any one fails the entire batch is
     /// rolled back.  The returned array has the same order as the input, with
@@ -46,9 +46,9 @@ extension Database {
     ///
     /// - Parameter records: The records to save.
     /// - Returns: A copy of `records` with primary keys updated as needed.
-    /// - Throws: ``TableRecordError`` or ``SqlCipherError``.
+    /// - Throws: ``EntityError`` or ``SqlCipherError``.
     @discardableResult
-    public func save<T: TableRecord>(_ records: [T]) throws -> [T] {
+    public func save<T: Entity>(_ records: [T]) throws -> [T] {
         guard !records.isEmpty else { return [] }
         try execute("BEGIN")
         var results: [T] = []
@@ -73,8 +73,8 @@ extension Database {
     /// let allWidgets = try await db.fetch(Widget.self)
     /// ```
     ///
-    /// - Parameter type: The `TableRecord` type to fetch.  Can be inferred from context.
-    public func fetch<T: TableRecord>(_ type: T.Type = T.self) throws -> [T] {
+    /// - Parameter type: The `Entity` type to fetch.  Can be inferred from context.
+    public func fetch<T: Entity>(_ type: T.Type = T.self) throws -> [T] {
         let decoder = RowDecoder()
         decoder.complexColumnStrategy = complexColumnStrategy
         let q = Select(.all).from(T.tableName).build()
@@ -99,10 +99,10 @@ extension Database {
     /// ```
     ///
     /// - Parameters:
-    ///   - type:      The `TableRecord` type to fetch.
+    ///   - type:      The `Entity` type to fetch.
     ///   - predicate: A WHERE ``Expression`` built with ``col(_:)`` and expression operators.
     ///   - params:    Variadic ``ParamBinding`` values for any ``Param`` references in `predicate`.
-    public func fetch<T: TableRecord>(
+    public func fetch<T: Entity>(
         _ type: T.Type = T.self,
         where predicate: Expression,
         _ params: ParamBinding...
@@ -123,9 +123,9 @@ extension Database {
     /// ```
     ///
     /// - Parameters:
-    ///   - type: The `TableRecord` type to fetch.  Can be inferred from context.
+    ///   - type: The `Entity` type to fetch.  Can be inferred from context.
     ///   - id:   The primary key value to look up.
-    public func fetchOne<T: TableRecord>(_ type: T.Type = T.self, id: T.ID) throws -> T? {
+    public func fetchOne<T: Entity>(_ type: T.Type = T.self, id: T.ID) throws -> T? {
         let decoder = RowDecoder()
         decoder.complexColumnStrategy = complexColumnStrategy
         let predicate = Expression.compare(ColumnRef(T.primaryKeyName), .eq, .literal(id))
@@ -137,12 +137,12 @@ extension Database {
 
     // MARK: - Private core
 
-    private func _save<T: TableRecord>(_ record: T) throws -> T {
+    private func _save<T: Entity>(_ record: T) throws -> T {
         let encoder = RowEncoder()
         encoder.complexColumnStrategy = complexColumnStrategy
         let columns = try encoder.encode(record)
 
-        guard !columns.isEmpty else { throw TableRecordError.noColumnsToInsert }
+        guard !columns.isEmpty else { throw EntityError.noColumnsToInsert }
 
         let pkName = T.primaryKeyName
         let pkValue = record[keyPath: T.primaryKey].sqlValue
@@ -156,13 +156,13 @@ extension Database {
     }
 
     /// INSERT without the PK column; write the assigned rowid back to the copy.
-    private func _insertAutoIncrement<T: TableRecord>(
+    private func _insertAutoIncrement<T: Entity>(
         _ record: T,
         columns: [(key: String, value: Value)],
         pkName: String
     ) throws -> T {
         let insertCols = columns.filter { $0.key != pkName }
-        guard !insertCols.isEmpty else { throw TableRecordError.noColumnsToInsert }
+        guard !insertCols.isEmpty else { throw EntityError.noColumnsToInsert }
 
         let colList = insertCols.map { "\"\($0.key)\"" }.joined(separator: ", ")
         let placeholders = Array(repeating: "?", count: insertCols.count).joined(separator: ", ")
@@ -182,7 +182,7 @@ extension Database {
     }
 
     /// INSERT … ON CONFLICT(pk) DO UPDATE SET …  (true upsert).
-    private func _upsert<T: TableRecord>(
+    private func _upsert<T: Entity>(
         _ record: T,
         columns: [(key: String, value: Value)],
         pkName: String

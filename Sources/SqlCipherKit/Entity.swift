@@ -1,11 +1,11 @@
-// MARK: - TableRecord
+// MARK: - Entity
 
 /// A type that can be persisted to a single database table via ``Database/save(_:)``.
 ///
-/// Adopt `TableRecord` on any `Codable` struct to get one-line save and fetch semantics:
+/// Adopt `Entity` on any `Codable` struct to get one-line save and fetch semantics:
 ///
 /// ```swift
-/// struct User: TableRecord {
+/// struct User: Entity {
 ///     static let tableName  = TableName("users")
 ///     static let primaryKey: WritableKeyPath<User, Int?> & Sendable = \.id
 ///     var id:    Int?        // nil → SQLite auto-assigns
@@ -26,7 +26,7 @@
 /// `"id"`, or provide a custom `CodingKeys` enum to rename any column:
 ///
 /// ```swift
-/// struct Product: TableRecord {
+/// struct Product: Entity {
 ///     typealias ID = String
 ///     static let tableName      = TableName("products")
 ///     static let primaryKeyName = "product_id"
@@ -54,7 +54,7 @@
 /// - `ID` must conform to ``SQLConvertible``, `Hashable`, and `Sendable`.
 ///   Use `Optional<Int>` (i.e. `Int?`) for auto-increment integer primary keys.
 /// - `primaryKey` must be a `WritableKeyPath` from `Self` to `ID`.
-public protocol TableRecord: Codable, Sendable {
+public protocol Entity: Codable, Sendable {
 
     /// The associated Swift type for the primary key value.
     ///
@@ -89,15 +89,15 @@ public protocol TableRecord: Codable, Sendable {
 
 // MARK: - Default implementations
 
-extension TableRecord {
+extension Entity {
     /// Defaults to `"id"`.
     public static var primaryKeyName: String { "id" }
 }
 
-// MARK: - TableRecordError
+// MARK: - EntityError
 
-/// Errors thrown by the ``TableRecord`` persistence layer.
-public enum TableRecordError: Error, CustomStringConvertible {
+/// Errors thrown by the ``Entity`` persistence layer.
+public enum EntityError: Error, CustomStringConvertible {
 
     /// The encoder produced no columns — the record cannot be saved.
     case noColumnsToInsert
@@ -108,10 +108,10 @@ public enum TableRecordError: Error, CustomStringConvertible {
     public var description: String {
         switch self {
         case .noColumnsToInsert:
-            return "TableRecord: no columns were produced by the encoder. "
+            return "Entity: no columns were produced by the encoder. "
                 + "Ensure the type conforms to Encodable with at least one property."
         case .noDataColumns:
-            return "TableRecord: the record has only a primary key column. "
+            return "Entity: the record has only a primary key column. "
                 + "There are no other columns to upsert."
         }
     }

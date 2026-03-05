@@ -88,7 +88,7 @@ private enum CatalogSchema {
 // MARK: - Fixture model types
 
 /// Simple model — caller-supplied Int primary key.
-private struct Widget: TableRecord, Equatable {
+private struct Widget: Entity, Equatable {
     static let tableName = WidgetSchema.table
     static let primaryKey = \Widget.id
     var id: Int
@@ -97,7 +97,7 @@ private struct Widget: TableRecord, Equatable {
 }
 
 /// Auto-increment integer PK.
-private struct Note: TableRecord, Equatable {
+private struct Note: Entity, Equatable {
     static let tableName = NoteSchema.table
     static let primaryKey = \Note.id
     var id: Int?
@@ -106,7 +106,7 @@ private struct Note: TableRecord, Equatable {
 }
 
 /// String primary key (UUID string).
-private struct Tag: TableRecord, Equatable {
+private struct Tag: Entity, Equatable {
     static let tableName = TagSchema.table
     static let primaryKeyName = "tag_id"
     static let primaryKey = \Tag.tagId
@@ -120,7 +120,7 @@ private struct Tag: TableRecord, Equatable {
 }
 
 /// Optional non-PK columns.
-private struct Event: TableRecord, Equatable {
+private struct Event: Entity, Equatable {
     static let tableName = EventSchema.table
     static let primaryKey = \Event.id
     var id: Int
@@ -129,7 +129,7 @@ private struct Event: TableRecord, Equatable {
 }
 
 /// Complex column types — array and optional dictionary stored as JSON.
-private struct Catalog: TableRecord, Equatable {
+private struct Catalog: Entity, Equatable {
     static let tableName = CatalogSchema.table
     static let primaryKey = \Catalog.id
     var id: Int
