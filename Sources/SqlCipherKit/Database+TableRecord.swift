@@ -65,6 +65,82 @@ extension Database {
         return results
     }
 
+    // MARK: - Fetch
+
+    /// Fetches all rows from `T`'s table, decoded as `[T]`.
+    ///
+    /// ```swift
+    /// let allWidgets = try await db.fetch(Widget.self)
+    /// ```
+    ///
+    /// - Parameters:
+    ///   - type:    The `TableRecord` type to fetch.  Can be inferred from context.
+    ///   - decoder: The ``RowDecoder`` to use.  Defaults to a fresh instance.
+    public func fetch<T: TableRecord>(
+        _ type: T.Type = T.self,
+        decoder: RowDecoder = RowDecoder()
+    ) throws -> [T] {
+        let q = Select(.all).from(T.tableName).build()
+        let rows = try withConnection { try $0._query(q) }
+        return try decoder.decode(T.self, from: rows)
+    }
+
+    /// Fetches rows matching `predicate` from `T`'s table.
+    ///
+    /// Use ``col(_:)`` and the expression operators to build the predicate, and
+    /// ``Param`` for values you want to supply at the call site rather than
+    /// baking into the query template:
+    ///
+    /// ```swift
+    /// // Literal values
+    /// let cheap = try await db.fetch(Widget.self, where: col("price") < 5.0)
+    ///
+    /// // Named param — same SQL template, different values
+    /// let minPrice = Param<Double>("minPrice")
+    /// let template = col("price") >= minPrice
+    /// let expensive = try await db.fetch(Widget.self, where: template, minPrice.set(100.0))
+    /// ```
+    ///
+    /// - Parameters:
+    ///   - type:      The `TableRecord` type to fetch.
+    ///   - predicate: A WHERE ``Expression`` built with ``col(_:)`` and expression operators.
+    ///   - params:    Variadic ``ParamBinding`` values for any ``Param`` references in `predicate`.
+    ///   - decoder:   The ``RowDecoder`` to use.  Defaults to a fresh instance.
+    public func fetch<T: TableRecord>(
+        _ type: T.Type = T.self,
+        where predicate: Expression,
+        _ params: ParamBinding...,
+        decoder: RowDecoder = RowDecoder()
+    ) throws -> [T] {
+        let q = Select(.all).from(T.tableName).where(predicate).build(params: params)
+        let rows = try withConnection { try $0._query(q) }
+        return try decoder.decode(T.self, from: rows)
+    }
+
+    /// Fetches the single row whose primary key equals `id`, or `nil` if absent.
+    ///
+    /// ```swift
+    /// if let widget = try await db.fetchOne(Widget.self, id: 42) {
+    ///     print(widget.name)
+    /// }
+    /// ```
+    ///
+    /// - Parameters:
+    ///   - type:    The `TableRecord` type to fetch.
+    ///   - id:      The primary key value to look up.
+    ///   - decoder: The ``RowDecoder`` to use.  Defaults to a fresh instance.
+    public func fetchOne<T: TableRecord>(
+        _ type: T.Type = T.self,
+        id: T.ID,
+        decoder: RowDecoder = RowDecoder()
+    ) throws -> T? {
+        let predicate = Expression.compare(ColumnRef(T.primaryKeyName), .eq, .literal(id))
+        let q = Select(.all).from(T.tableName).where(predicate).limit(1).build()
+        let rows = try withConnection { try $0._query(q) }
+        let decoded = try decoder.decode(T.self, from: rows)
+        return decoded.first
+    }
+
     // MARK: - Private core
 
     private func _save<T: TableRecord>(_ record: T) throws -> T {
@@ -73,7 +149,7 @@ extension Database {
 
         guard !columns.isEmpty else { throw TableRecordError.noColumnsToInsert }
 
-        let pkName  = T.primaryKeyName
+        let pkName = T.primaryKeyName
         let pkValue = record[keyPath: T.primaryKey].sqlValue
 
         switch pkValue {
@@ -93,10 +169,10 @@ extension Database {
         let insertCols = columns.filter { $0.key != pkName }
         guard !insertCols.isEmpty else { throw TableRecordError.noColumnsToInsert }
 
-        let colList      = insertCols.map { "\"\($0.key)\"" }.joined(separator: ", ")
+        let colList = insertCols.map { "\"\($0.key)\"" }.joined(separator: ", ")
         let placeholders = Array(repeating: "?", count: insertCols.count).joined(separator: ", ")
-        let sql          = "INSERT INTO \"\(T.tableName.name)\" (\(colList)) VALUES (\(placeholders))"
-        let bindings     = insertCols.map { $0.value as any SQLConvertible }
+        let sql = "INSERT INTO \"\(T.tableName.name)\" (\(colList)) VALUES (\(placeholders))"
+        let bindings = insertCols.map { $0.value as any SQLConvertible }
 
         try withConnection { try $0._execute(sql, bindings: bindings) }
 
@@ -118,16 +194,18 @@ extension Database {
     ) throws -> T {
         let updateCols = columns.filter { $0.key != pkName }
 
-        let colList      = columns.map { "\"\($0.key)\"" }.joined(separator: ", ")
+        let colList = columns.map { "\"\($0.key)\"" }.joined(separator: ", ")
         let placeholders = Array(repeating: "?", count: columns.count).joined(separator: ", ")
-        let bindings     = columns.map { $0.value as any SQLConvertible }
+        let bindings = columns.map { $0.value as any SQLConvertible }
 
         let sql: String
         if updateCols.isEmpty {
             // Only a PK column — treat as idempotent insert.
-            sql = "INSERT OR IGNORE INTO \"\(T.tableName.name)\" (\(colList)) VALUES (\(placeholders))"
+            sql =
+                "INSERT OR IGNORE INTO \"\(T.tableName.name)\" (\(colList)) VALUES (\(placeholders))"
         } else {
-            let setClause = updateCols
+            let setClause =
+                updateCols
                 .map { "\"\($0.key)\" = excluded.\"\($0.key)\"" }
                 .joined(separator: ",\n    ")
             sql = """
@@ -139,6 +217,6 @@ extension Database {
         }
 
         try withConnection { try $0._execute(sql, bindings: bindings) }
-        return record   // PK was already set; copy is identical to input
+        return record  // PK was already set; copy is identical to input
     }
 }

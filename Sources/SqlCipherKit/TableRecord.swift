@@ -2,11 +2,10 @@
 
 /// A type that can be persisted to a single database table via ``Database/save(_:)``.
 ///
-/// Adopt `TableRecord` on any `Encodable` struct to get one-line save semantics:
+/// Adopt `TableRecord` on any `Codable` struct to get one-line save and fetch semantics:
 ///
 /// ```swift
 /// struct User: TableRecord {
-///     typealias ID = Int?    // declare explicitly so Swift can satisfy constraints
 ///     static let tableName  = TableName("users")
 ///     static let primaryKey: WritableKeyPath<User, Int?> & Sendable = \.id
 ///     var id:    Int?        // nil → SQLite auto-assigns
@@ -51,11 +50,11 @@
 ///
 /// ### Conformance requirements
 ///
-/// - `Self` must be `Encodable` and `Sendable`.
+/// - `Self` must be `Codable` and `Sendable`.
 /// - `ID` must conform to ``SQLConvertible``, `Hashable`, and `Sendable`.
 ///   Use `Optional<Int>` (i.e. `Int?`) for auto-increment integer primary keys.
 /// - `primaryKey` must be a `WritableKeyPath` from `Self` to `ID`.
-public protocol TableRecord: Encodable, Sendable {
+public protocol TableRecord: Codable, Sendable {
 
     /// The associated Swift type for the primary key value.
     ///

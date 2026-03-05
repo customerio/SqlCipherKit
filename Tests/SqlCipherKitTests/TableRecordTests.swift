@@ -15,11 +15,71 @@ private func makeDB() throws -> Database {
     try Database(path: tempDBPath(), key: "testkey")
 }
 
+// MARK: - Schema namespaces
+//
+// Caseless enums that hold static TableName / ColumnRef constants and a DDL
+// factory for each fixture model.  Avoids repeating string literals across
+// every test that needs to create or query the same table.
+
+private enum WidgetSchema {
+    static let table = TableName("widgets")
+    static let id = ColumnRef("id")
+    static let name = ColumnRef("name")
+    static let price = ColumnRef("price")
+
+    static func createTable() -> CreateTable {
+        CreateTable(table)
+            .column(id.name, .integer, .primaryKey)
+            .column(name.name, .text, .notNull)
+            .column(price.name, .real, .notNull)
+    }
+}
+
+private enum NoteSchema {
+    static let table = TableName("notes")
+    static let id = ColumnRef("id")
+    static let title = ColumnRef("title")
+    static let body = ColumnRef("body")
+
+    static func createTable() -> CreateTable {
+        CreateTable(table)
+            .column(id.name, .integer, .autoIncrement)
+            .column(title.name, .text, .notNull)
+            .column(body.name, .text, .notNull)
+    }
+}
+
+private enum TagSchema {
+    static let table = TableName("tags")
+    static let tagId = ColumnRef("tag_id")
+    static let label = ColumnRef("label")
+
+    static func createTable() -> CreateTable {
+        CreateTable(table)
+            .column(tagId.name, .text, .primaryKey)
+            .column(label.name, .text, .notNull)
+    }
+}
+
+private enum EventSchema {
+    static let table = TableName("events")
+    static let id = ColumnRef("id")
+    static let name = ColumnRef("name")
+    static let notes = ColumnRef("notes")
+
+    static func createTable() -> CreateTable {
+        CreateTable(table)
+            .column(id.name, .integer, .primaryKey)
+            .column(name.name, .text, .notNull)
+            .column(notes.name, .text)
+    }
+}
+
 // MARK: - Fixture model types
 
 /// Simple model — caller-supplied Int primary key.
 private struct Widget: TableRecord, Equatable {
-    static let tableName = TableName("widgets")
+    static let tableName = WidgetSchema.table
     static let primaryKey = \Widget.id
     var id: Int
     var name: String
@@ -28,7 +88,7 @@ private struct Widget: TableRecord, Equatable {
 
 /// Auto-increment integer PK.
 private struct Note: TableRecord, Equatable {
-    static let tableName = TableName("notes")
+    static let tableName = NoteSchema.table
     static let primaryKey = \Note.id
     var id: Int?
     var title: String
@@ -37,7 +97,7 @@ private struct Note: TableRecord, Equatable {
 
 /// String primary key (UUID string).
 private struct Tag: TableRecord, Equatable {
-    static let tableName = TableName("tags")
+    static let tableName = TagSchema.table
     static let primaryKeyName = "tag_id"
     static let primaryKey = \Tag.tagId
     var tagId: String
@@ -51,7 +111,7 @@ private struct Tag: TableRecord, Equatable {
 
 /// Optional non-PK columns.
 private struct Event: TableRecord, Equatable {
-    static let tableName = TableName("events")
+    static let tableName = EventSchema.table
     static let primaryKey = \Event.id
     var id: Int
     var name: String
@@ -230,11 +290,7 @@ struct SaveCallerPKTests {
     @Test("save inserts a new record")
     func insertsNewRecord() async throws {
         let db = try makeDB()
-        try await db.execute(
-            CreateTable(TableName("widgets"))
-                .column("id", .integer, .primaryKey)
-                .column("name", .text, .notNull)
-                .column("price", .real, .notNull))
+        try await db.execute(WidgetSchema.createTable())
 
         let w = Widget(id: 1, name: "Bolt", price: 0.99)
         try await db.save(w)
@@ -247,11 +303,7 @@ struct SaveCallerPKTests {
     @Test("save returns record unchanged for non-autoincrement PK")
     func returnsUnchanged() async throws {
         let db = try makeDB()
-        try await db.execute(
-            CreateTable(TableName("widgets"))
-                .column("id", .integer, .primaryKey)
-                .column("name", .text, .notNull)
-                .column("price", .real, .notNull))
+        try await db.execute(WidgetSchema.createTable())
 
         let w = Widget(id: 42, name: "Nut", price: 0.25)
         let saved = try await db.save(w)
@@ -261,11 +313,7 @@ struct SaveCallerPKTests {
     @Test("save upserts an existing record in-place")
     func upsertsExistingRecord() async throws {
         let db = try makeDB()
-        try await db.execute(
-            CreateTable(TableName("widgets"))
-                .column("id", .integer, .primaryKey)
-                .column("name", .text, .notNull)
-                .column("price", .real, .notNull))
+        try await db.execute(WidgetSchema.createTable())
 
         try await db.save(Widget(id: 1, name: "Bolt", price: 0.99))
         try await db.save(Widget(id: 1, name: "Bolt Pro", price: 1.49))
@@ -279,11 +327,7 @@ struct SaveCallerPKTests {
     @Test("save multiple records with upsert semantics")
     func multipleUpserts() async throws {
         let db = try makeDB()
-        try await db.execute(
-            CreateTable(TableName("widgets"))
-                .column("id", .integer, .primaryKey)
-                .column("name", .text, .notNull)
-                .column("price", .real, .notNull))
+        try await db.execute(WidgetSchema.createTable())
 
         let widgets = [
             Widget(id: 1, name: "A", price: 1.0),
@@ -305,11 +349,7 @@ struct SaveAutoIncrementTests {
     @Test("save assigns rowid and returns it in a copy")
     func assignsRowid() async throws {
         let db = try makeDB()
-        try await db.execute(
-            CreateTable(TableName("notes"))
-                .column("id", .integer, .autoIncrement)
-                .column("title", .text, .notNull)
-                .column("body", .text, .notNull))
+        try await db.execute(NoteSchema.createTable())
 
         var note = Note(id: nil, title: "Hello", body: "World")
         note = try await db.save(note)
@@ -320,11 +360,7 @@ struct SaveAutoIncrementTests {
     @Test("successive saves assign incrementing rowids")
     func incrementingRowids() async throws {
         let db = try makeDB()
-        try await db.execute(
-            CreateTable(TableName("notes"))
-                .column("id", .integer, .autoIncrement)
-                .column("title", .text, .notNull)
-                .column("body", .text, .notNull))
+        try await db.execute(NoteSchema.createTable())
 
         let n1 = try await db.save(Note(id: nil, title: "A", body: ""))
         let n2 = try await db.save(Note(id: nil, title: "B", body: ""))
@@ -338,11 +374,7 @@ struct SaveAutoIncrementTests {
     @Test("discardable result: save without capturing return value")
     func discardableResult() async throws {
         let db = try makeDB()
-        try await db.execute(
-            CreateTable(TableName("notes"))
-                .column("id", .integer, .autoIncrement)
-                .column("title", .text, .notNull)
-                .column("body", .text, .notNull))
+        try await db.execute(NoteSchema.createTable())
 
         // Should compile without warning due to @discardableResult
         try await db.save(Note(id: nil, title: "Ignored", body: ""))
@@ -354,11 +386,7 @@ struct SaveAutoIncrementTests {
     @Test("batch save with auto-increment returns all updated copies")
     func batchAutoIncrement() async throws {
         let db = try makeDB()
-        try await db.execute(
-            CreateTable(TableName("notes"))
-                .column("id", .integer, .autoIncrement)
-                .column("title", .text, .notNull)
-                .column("body", .text, .notNull))
+        try await db.execute(NoteSchema.createTable())
 
         let notes = [
             Note(id: nil, title: "X", body: ""),
@@ -378,10 +406,7 @@ struct SaveStringPKTests {
     @Test("save inserts with custom string primary key")
     func insertsStringPK() async throws {
         let db = try makeDB()
-        try await db.execute(
-            CreateTable(TableName("tags"))
-                .column("tag_id", .text, .primaryKey)
-                .column("label", .text, .notNull))
+        try await db.execute(TagSchema.createTable())
 
         let tag = Tag(tagId: "swift", label: "Swift language")
         try await db.save(tag)
@@ -394,10 +419,7 @@ struct SaveStringPKTests {
     @Test("save upserts an existing string-keyed record")
     func upsertsStringPK() async throws {
         let db = try makeDB()
-        try await db.execute(
-            CreateTable(TableName("tags"))
-                .column("tag_id", .text, .primaryKey)
-                .column("label", .text, .notNull))
+        try await db.execute(TagSchema.createTable())
 
         try await db.save(Tag(tagId: "swift", label: "Swift"))
         try await db.save(Tag(tagId: "swift", label: "Swift Language"))
@@ -416,11 +438,7 @@ struct SaveOptionalColumnsTests {
     @Test("nil optional column saved as NULL")
     func nilOptionalColumn() async throws {
         let db = try makeDB()
-        try await db.execute(
-            CreateTable(TableName("events"))
-                .column("id", .integer, .primaryKey)
-                .column("name", .text, .notNull)
-                .column("notes", .text))
+        try await db.execute(EventSchema.createTable())
 
         try await db.save(Event(id: 1, name: "Launch", notes: nil))
 
@@ -432,11 +450,7 @@ struct SaveOptionalColumnsTests {
     @Test("non-nil optional column saved with value")
     func nonNilOptionalColumn() async throws {
         let db = try makeDB()
-        try await db.execute(
-            CreateTable(TableName("events"))
-                .column("id", .integer, .primaryKey)
-                .column("name", .text, .notNull)
-                .column("notes", .text))
+        try await db.execute(EventSchema.createTable())
 
         try await db.save(Event(id: 1, name: "Launch", notes: "Big day"))
 
@@ -453,11 +467,7 @@ struct SaveBatchAtomicityTests {
     @Test("batch save rolls back all records on error")
     func rollsBackOnError() async throws {
         let db = try makeDB()
-        try await db.execute(
-            CreateTable(TableName("widgets"))
-                .column("id", .integer, .primaryKey)
-                .column("name", .text, .notNull)
-                .column("price", .real, .notNull))
+        try await db.execute(WidgetSchema.createTable())
 
         // First widget is fine; use a duplicate PK for the second to cause an error on insert.
         // Actually ON CONFLICT upserts, so let's cause a NOT NULL violation instead.
@@ -476,5 +486,113 @@ struct SaveBatchAtomicityTests {
         // Neither record should exist.
         let count: Int? = try await db.scalarQuery("SELECT COUNT(*) FROM widgets", as: Int.self)
         #expect(count == 0)
+    }
+}
+
+// MARK: - Integration: fetch helpers
+
+private func makeWidgetsDB() async throws -> Database {
+    let db = try makeDB()
+    try await db.execute(WidgetSchema.createTable())
+    try await db.save([
+        Widget(id: 1, name: "Bolt", price: 0.99),
+        Widget(id: 2, name: "Nut", price: 0.49),
+        Widget(id: 3, name: "Washer", price: 0.25),
+        Widget(id: 4, name: "Screw", price: 1.49),
+    ])
+    return db
+}
+
+@Suite("Database.fetch – all rows")
+struct FetchAllTests {
+
+    @Test("fetch returns all rows")
+    func fetchAll() async throws {
+        let db = try await makeWidgetsDB()
+        let widgets: [Widget] = try await db.fetch(Widget.self)
+        #expect(widgets.count == 4)
+    }
+
+    @Test("fetch returns empty array when table is empty")
+    func fetchEmpty() async throws {
+        let db = try makeDB()
+        try await db.execute(WidgetSchema.createTable())
+        let widgets: [Widget] = try await db.fetch(Widget.self)
+        #expect(widgets.isEmpty)
+    }
+}
+
+@Suite("Database.fetch – WHERE predicate")
+struct FetchWhereTests {
+
+    @Test("fetch with literal predicate filters rows")
+    func fetchWithLiteral() async throws {
+        let db = try await makeWidgetsDB()
+        let cheap: [Widget] = try await db.fetch(Widget.self, where: WidgetSchema.price < 0.50)
+        #expect(cheap.count == 2)
+        #expect(cheap.allSatisfy { $0.price < 0.50 })
+    }
+
+    @Test("fetch with AND predicate")
+    func fetchWithAnd() async throws {
+        let db = try await makeWidgetsDB()
+        let results: [Widget] = try await db.fetch(
+            Widget.self, where: WidgetSchema.price >= 0.49 && WidgetSchema.price <= 0.99)
+        #expect(results.count == 2)
+    }
+
+    @Test("fetch with named Param")
+    func fetchWithParam() async throws {
+        let db = try await makeWidgetsDB()
+        let minPrice = Param<Double>("minPrice")
+        let results: [Widget] = try await db.fetch(
+            Widget.self, where: WidgetSchema.price >= minPrice, minPrice.set(0.98))
+        #expect(results.count == 2)  // Bolt (0.99) and Screw (1.49)
+        #expect(results.allSatisfy { $0.price >= 0.98 })
+    }
+
+    @Test("fetch with predicate returns empty when no match")
+    func fetchNoMatch() async throws {
+        let db = try await makeWidgetsDB()
+        let results: [Widget] = try await db.fetch(Widget.self, where: WidgetSchema.price > 100.0)
+        #expect(results.isEmpty)
+    }
+}
+
+@Suite("Database.fetchOne – by primary key")
+struct FetchOneTests {
+
+    @Test("fetchOne returns the matching record")
+    func fetchOneFound() async throws {
+        let db = try await makeWidgetsDB()
+        let widget = try await db.fetchOne(Widget.self, id: 2)
+        #expect(widget?.name == "Nut")
+    }
+
+    @Test("fetchOne returns nil when id is absent")
+    func fetchOneNotFound() async throws {
+        let db = try await makeWidgetsDB()
+        let widget = try await db.fetchOne(Widget.self, id: 99)
+        #expect(widget == nil)
+    }
+
+    @Test("fetchOne works with string primary key")
+    func fetchOneStringPK() async throws {
+        let db = try makeDB()
+        try await db.execute(TagSchema.createTable())
+        try await db.save(Tag(tagId: "swift", label: "Swift Language"))
+        try await db.save(Tag(tagId: "sql", label: "SQL"))
+
+        let tag = try await db.fetchOne(Tag.self, id: "swift")
+        #expect(tag?.label == "Swift Language")
+    }
+
+    @Test("fetchOne with auto-increment PK")
+    func fetchOneAutoIncrement() async throws {
+        let db = try makeDB()
+        try await db.execute(NoteSchema.createTable())
+        let saved = try await db.save(Note(id: nil, title: "Hello", body: "World"))
+        let fetched = try await db.fetchOne(Note.self, id: saved.id)
+        #expect(fetched?.title == "Hello")
     }
 }
