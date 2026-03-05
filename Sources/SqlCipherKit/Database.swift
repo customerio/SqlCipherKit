@@ -52,6 +52,12 @@ public actor Database {
     /// no remaining references, so no concurrent access is possible.
     private nonisolated(unsafe) let handle: OpaquePointer
 
+    /// LRU cache of compiled prepared statements for this database.
+    ///
+    /// Also `nonisolated(unsafe)` for the same reason as `handle`; the cache
+    /// is only ever accessed from within the actor's executor.
+    private nonisolated(unsafe) let statementCache: StatementCache
+
     // MARK: - Initialisation
 
     /// Opens or creates an encrypted database at `path`.
@@ -111,6 +117,7 @@ public actor Database {
         }
 
         self.handle = opened
+        self.statementCache = StatementCache(db: opened)
     }
 
     deinit {
@@ -134,7 +141,7 @@ public actor Database {
     public func withConnection<R>(
         _ body: (borrowing Connection) throws -> R
     ) throws -> R {
-        try body(Connection(db: handle))
+        try body(Connection(db: handle, cache: statementCache))
     }
 
     // MARK: - Convenience: execute

@@ -1,13 +1,64 @@
 import CSqlCipher
 import Foundation
 
-// MARK: - Internal statement helpers
+// MARK: - StatementCache
 
-/// Prepares an SQL statement and binds parameters, returning a finalise-on-deinit handle.
-final class PreparedStatement {
-    let handle: OpaquePointer
+/// An LRU cache of compiled SQLite prepared statements, keyed by SQL text.
+///
+/// Cached statements are reset and have their bindings cleared before each
+/// reuse, so they are always in a clean state when handed out.
+///
+/// Statements that are not safe to cache are excluded:
+/// - `CREATE` / `ALTER` / `DROP` — DDL that modifies the schema
+/// - `PRAGMA` — configuration commands whose results are not repeatable
+///
+/// On a schema change (`SQLITE_SCHEMA`) callers should call ``evict(_:)`` so
+/// the stale compiled plan is discarded and the next prepare is fresh.
+final class StatementCache {
 
-    init(db: OpaquePointer, sql: String) throws {
+    // MARK: - Configuration
+
+    static let defaultCapacity = 64
+
+    // MARK: - Storage
+
+    private let db: OpaquePointer
+    private let capacity: Int
+    /// Compiled statement handles keyed by SQL text.
+    private var cache: [String: OpaquePointer] = [:]
+    /// Access order; index 0 is the least-recently-used entry.
+    private var order: [String] = []
+
+    // MARK: - Init / deinit
+
+    init(db: OpaquePointer, capacity: Int = StatementCache.defaultCapacity) {
+        self.db = db
+        self.capacity = capacity
+        cache.reserveCapacity(capacity)
+        order.reserveCapacity(capacity)
+    }
+
+    deinit {
+        for handle in cache.values { sqlite3_finalize(handle) }
+    }
+
+    // MARK: - Public interface
+
+    /// Returns a reset, binding-cleared prepared statement from the cache, or
+    /// `nil` when `sql` is not cacheable (DDL / PRAGMA).
+    ///
+    /// - Throws: ``SqlCipherError/prepareFailed(sql:message:)`` if a new
+    ///   statement cannot be compiled.
+    func cachedStatement(for sql: String) throws -> OpaquePointer? {
+        guard isCacheable(sql) else { return nil }
+
+        if let existing = cache[sql] {
+            touch(sql)
+            sqlite3_reset(existing)
+            sqlite3_clear_bindings(existing)
+            return existing
+        }
+
         var stmt: OpaquePointer?
         let rc = sqlite3_prepare_v2(db, sql, -1, &stmt, nil)
         guard rc == SQLITE_OK, let s = stmt else {
@@ -16,11 +67,90 @@ final class PreparedStatement {
                 message: String(cString: sqlite3_errmsg(db))
             )
         }
-        self.handle = s
+        insert(sql, handle: s)
+        return s
     }
 
-    deinit {
+    /// Removes and finalizes the cached statement for `sql`, if present.
+    ///
+    /// Call this when `sqlite3_step` returns `SQLITE_SCHEMA` so the next
+    /// prepare compiles a fresh plan against the updated schema.
+    func evict(_ sql: String) {
+        guard let handle = cache.removeValue(forKey: sql) else { return }
+        order.removeAll { $0 == sql }
         sqlite3_finalize(handle)
+    }
+
+    // MARK: - Private
+
+    private func touch(_ sql: String) {
+        order.removeAll { $0 == sql }
+        order.append(sql)
+    }
+
+    private func insert(_ sql: String, handle: OpaquePointer) {
+        if cache.count >= capacity, let lru = order.first {
+            if let evicted = cache.removeValue(forKey: lru) { sqlite3_finalize(evicted) }
+            order.removeFirst()
+        }
+        cache[sql] = handle
+        order.append(sql)
+    }
+
+    /// Returns `false` for statement types that must not be cached.
+    ///
+    /// Fast prefix match on the first non-whitespace token (uppercased).
+    /// 7 characters covers "PRAGMA " (6), "CREATE " (6), "ALTER T" (7),
+    /// and "DROP TA" (7).
+    private func isCacheable(_ sql: String) -> Bool {
+        let prefix = sql.drop(while: \.isWhitespace).prefix(7).uppercased()
+        return !prefix.hasPrefix("PRAGMA")
+            && !prefix.hasPrefix("CREATE")
+            && !prefix.hasPrefix("ALTER")
+            && !prefix.hasPrefix("DROP")
+    }
+}
+
+// MARK: - StatementHandle
+
+/// Tracks ownership of a compiled SQLite statement.
+///
+/// - `cached`: owned by `StatementCache`; must not be finalized by the caller.
+/// - `owned`:  compiled for one-shot use; finalized when this handle is done.
+private enum StatementHandle {
+    case cached(OpaquePointer)
+    case owned(OpaquePointer)
+
+    var pointer: OpaquePointer {
+        switch self { case .cached(let p), .owned(let p): return p }
+    }
+
+    var isCached: Bool { if case .cached = self { return true }; return false }
+
+    /// Called when the statement is no longer in use.
+    ///
+    /// - Owned handles are finalized (freed).
+    /// - Cached handles are reset and have their bindings cleared, releasing
+    ///   any read/write locks held by a partially-stepped statement, so the
+    ///   handle is ready for the next use without holding table locks.
+    func done() {
+        switch self {
+        case .owned(let p):  sqlite3_finalize(p)
+        case .cached(let p): sqlite3_reset(p); sqlite3_clear_bindings(p)
+        }
+    }
+
+    static func prepare(sql: String, db: OpaquePointer, cache: StatementCache) throws -> StatementHandle {
+        if let p = try cache.cachedStatement(for: sql) { return .cached(p) }
+        var stmt: OpaquePointer?
+        let rc = sqlite3_prepare_v2(db, sql, -1, &stmt, nil)
+        guard rc == SQLITE_OK, let s = stmt else {
+            throw SqlCipherError.prepareFailed(
+                sql: sql,
+                message: String(cString: sqlite3_errmsg(db))
+            )
+        }
+        return .owned(s)
     }
 }
 
@@ -45,11 +175,14 @@ public struct Connection: ~Copyable {
 
     /// The raw `sqlite3 *` handle, owned by the surrounding `Database` actor.
     let db: OpaquePointer
+    /// Shared statement cache, owned by the surrounding `Database` actor.
+    let cache: StatementCache
 
     // MARK: - Init (internal only)
 
-    init(db: OpaquePointer) {
+    init(db: OpaquePointer, cache: StatementCache) {
         self.db = db
+        self.cache = cache
     }
 
     // MARK: - Execute (write / DDL)
@@ -103,20 +236,24 @@ public struct Connection: ~Copyable {
     // MARK: - Internal array-based entries (used by Database for forwarding)
 
     func _execute(_ sql: String, bindings: [any SQLConvertible]) throws {
-        let stmt = try PreparedStatement(db: db, sql: sql)
-        try bind(stmt.handle, bindings)
-        let rc = sqlite3_step(stmt.handle)
+        let stmt = try StatementHandle.prepare(sql: sql, db: db, cache: cache)
+        defer { stmt.done() }
+        try bind(stmt.pointer, bindings)
+        let rc = sqlite3_step(stmt.pointer)
+        if rc == SQLITE_SCHEMA, stmt.isCached {
+            // Schema changed: evict the stale plan and let the caller retry.
+            cache.evict(sql)
+        }
         guard rc == SQLITE_DONE || rc == SQLITE_ROW else {
-            throw SqlCipherError.stepFailed(
-                message: String(cString: sqlite3_errmsg(db))
-            )
+            throw SqlCipherError.stepFailed(message: String(cString: sqlite3_errmsg(db)))
         }
     }
 
     func _query(_ sql: String, bindings: [any SQLConvertible]) throws -> [Row] {
-        let stmt = try PreparedStatement(db: db, sql: sql)
-        try bind(stmt.handle, bindings)
-        return try collectRows(stmt.handle)
+        let stmt = try StatementHandle.prepare(sql: sql, db: db, cache: cache)
+        defer { stmt.done() }
+        try bind(stmt.pointer, bindings)
+        return try collectRows(stmt.pointer, sql: sql)
     }
 
     func _scalarQuery<T: SQLConvertible>(
@@ -124,10 +261,17 @@ public struct Connection: ~Copyable {
         bindings: [any SQLConvertible],
         as type: T.Type = T.self
     ) throws -> T? {
-        let stmt = try PreparedStatement(db: db, sql: sql)
-        try bind(stmt.handle, bindings)
-        guard sqlite3_step(stmt.handle) == SQLITE_ROW else { return nil }
-        return T.from(sqlValue: readValue(stmt.handle, column: 0))
+        let stmt = try StatementHandle.prepare(sql: sql, db: db, cache: cache)
+        defer { stmt.done() }
+        try bind(stmt.pointer, bindings)
+        let rc = sqlite3_step(stmt.pointer)
+        if rc == SQLITE_SCHEMA, stmt.isCached { cache.evict(sql) }
+        // SQLITE_DONE means no rows; any other non-ROW code is an error.
+        if rc != SQLITE_ROW && rc != SQLITE_DONE {
+            throw SqlCipherError.stepFailed(message: String(cString: sqlite3_errmsg(db)))
+        }
+        guard rc == SQLITE_ROW else { return nil }
+        return T.from(sqlValue: readValue(stmt.pointer, column: 0))
     }
 }
 
@@ -158,7 +302,7 @@ extension Connection {
         }
     }
 
-    private func collectRows(_ stmt: OpaquePointer) throws -> [Row] {
+    private func collectRows(_ stmt: OpaquePointer, sql: String) throws -> [Row] {
         let colCount = Int(sqlite3_column_count(stmt))
         var columnIndex: [String: Int] = [:]
         for i in 0..<colCount {
@@ -176,6 +320,7 @@ extension Connection {
             } else if rc == SQLITE_DONE {
                 break
             } else {
+                if rc == SQLITE_SCHEMA { cache.evict(sql) }
                 throw SqlCipherError.stepFailed(
                     message: String(cString: sqlite3_errmsg(db))
                 )
