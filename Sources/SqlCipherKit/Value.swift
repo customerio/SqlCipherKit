@@ -16,11 +16,11 @@ public enum Value: Sendable, Hashable {
 extension Value: CustomStringConvertible {
     public var description: String {
         switch self {
-        case .null:              return "NULL"
-        case .integer(let i):   return "\(i)"
-        case .real(let d):      return "\(d)"
-        case .text(let s):      return s
-        case .blob(let d):      return "<\(d.count) bytes>"
+        case .null: return "NULL"
+        case .integer(let i): return "\(i)"
+        case .real(let d): return "\(d)"
+        case .text(let s): return s
+        case .blob(let d): return "<\(d.count) bytes>"
         }
     }
 }
@@ -93,9 +93,9 @@ extension Double: SQLConvertible {
     public var sqlValue: Value { .real(self) }
     public static func from(sqlValue: Value) -> Double? {
         switch sqlValue {
-        case .real(let d):    return d
+        case .real(let d): return d
         case .integer(let i): return Double(i)
-        default:              return nil
+        default: return nil
         }
     }
 }
@@ -104,9 +104,9 @@ extension Float: SQLConvertible {
     public var sqlValue: Value { .real(Double(self)) }
     public static func from(sqlValue: Value) -> Float? {
         switch sqlValue {
-        case .real(let d):    return Float(d)
+        case .real(let d): return Float(d)
         case .integer(let i): return Float(i)
-        default:              return nil
+        default: return nil
         }
     }
 }
@@ -124,5 +124,25 @@ extension Data: SQLConvertible {
     public static func from(sqlValue: Value) -> Data? {
         if case .blob(let d) = sqlValue { return d }
         return nil
+    }
+}
+
+// MARK: - Optional conformance
+
+/// Allows `Optional<T>` to round-trip through SQL columns.
+///
+/// - `nil` encodes as `.null`.
+/// - `.null` decodes back to `nil` (i.e. `.some(.none)`, not `.none`).
+///   A `.none` return from `from(sqlValue:)` indicates a parsing failure,
+///   not a SQL NULL — that distinction matters for generic code that checks
+///   whether decoding succeeded.
+extension Optional: SQLConvertible where Wrapped: SQLConvertible {
+    public var sqlValue: Value { self?.sqlValue ?? .null }
+
+    /// Returns `.some(.none)` for SQL NULL, `.some(.some(value))` on success,
+    /// or `.none` when the value is present but cannot be parsed as `Wrapped`.
+    public static func from(sqlValue: Value) -> Self? {
+        if case .null = sqlValue { return .some(.none) }
+        return Wrapped.from(sqlValue: sqlValue).map { .some($0) }
     }
 }
