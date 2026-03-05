@@ -5,12 +5,6 @@ import Testing
 
 // MARK: - Helpers
 
-private func tempDBPath() -> String {
-    URL(fileURLWithPath: NSTemporaryDirectory())
-        .appendingPathComponent("tablerecord-test-\(UUID().uuidString).db")
-        .path
-}
-
 private func makeDB() throws -> Database {
     try Database(path: tempDBPath(), key: "testkey")
 }
