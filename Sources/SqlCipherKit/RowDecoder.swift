@@ -78,6 +78,11 @@ public final class RowDecoder {
     /// Strategy used to decode `Date` values.  Defaults to `.deferredToDate`.
     public var dateDecodingStrategy: DateDecodingStrategy = .deferredToDate
 
+    /// Strategy used to decode properties stored as complex column values
+    /// (arrays, dictionaries, nested structs).  Defaults to ``ComplexColumnStrategy/json``.
+    /// Set to `nil` to throw when the decoder encounters such a column.
+    public var complexColumnStrategy: ComplexColumnStrategy? = .json
+
     // MARK: - Init
 
     public init() {}
@@ -86,7 +91,10 @@ public final class RowDecoder {
 
     /// Decodes a single `Row` into `T`.
     public func decode<T: Decodable>(_ type: T.Type = T.self, from row: Row) throws -> T {
-        try T(from: _RowDecoder(row: row, codingPath: [], dateStrategy: dateDecodingStrategy))
+        try T(
+            from: _RowDecoder(
+                row: row, codingPath: [], dateStrategy: dateDecodingStrategy,
+                complexStrategy: complexColumnStrategy))
     }
 
     /// Decodes an array of `Row` values into `[T]`.
@@ -102,17 +110,21 @@ private struct _RowDecoder: Decoder {
     let codingPath: [CodingKey]
     let userInfo: [CodingUserInfoKey: Any] = [:]
     let dateStrategy: RowDecoder.DateDecodingStrategy
+    let complexStrategy: ComplexColumnStrategy?
 
     func container<Key: CodingKey>(keyedBy type: Key.Type) -> KeyedDecodingContainer<Key> {
-        KeyedDecodingContainer(_KeyedContainer<Key>(
-            row: row, codingPath: codingPath, dateStrategy: dateStrategy))
+        KeyedDecodingContainer(
+            _KeyedContainer<Key>(
+                row: row, codingPath: codingPath, dateStrategy: dateStrategy,
+                complexStrategy: complexStrategy))
     }
 
     func unkeyedContainer() throws -> UnkeyedDecodingContainer {
-        throw DecodingError.dataCorrupted(.init(
-            codingPath: codingPath,
-            debugDescription: "RowDecoder does not support unkeyed (array) containers. " +
-                              "Decode structs with named properties instead."))
+        throw DecodingError.dataCorrupted(
+            .init(
+                codingPath: codingPath,
+                debugDescription: "RowDecoder does not support unkeyed (array) containers. "
+                    + "Decode structs with named properties instead."))
     }
 
     func singleValueContainer() throws -> SingleValueDecodingContainer {
@@ -133,6 +145,7 @@ private struct _KeyedContainer<Key: CodingKey>: KeyedDecodingContainerProtocol {
     let row: Row
     let codingPath: [CodingKey]
     let dateStrategy: RowDecoder.DateDecodingStrategy
+    let complexStrategy: ComplexColumnStrategy?
 
     var allKeys: [Key] { [] }
 
@@ -152,17 +165,17 @@ private struct _KeyedContainer<Key: CodingKey>: KeyedDecodingContainerProtocol {
 
     // MARK: Primitives
 
-    func decode(_ type: Bool.Type,   forKey key: Key) throws -> Bool   { try primitive(key) }
+    func decode(_ type: Bool.Type, forKey key: Key) throws -> Bool { try primitive(key) }
     func decode(_ type: String.Type, forKey key: Key) throws -> String { try primitive(key) }
     func decode(_ type: Double.Type, forKey key: Key) throws -> Double { try primitive(key) }
-    func decode(_ type: Float.Type,  forKey key: Key) throws -> Float  { try primitive(key) }
-    func decode(_ type: Int.Type,    forKey key: Key) throws -> Int    { try primitive(key) }
-    func decode(_ type: Int8.Type,   forKey key: Key) throws -> Int8   { try primitive(key) }
-    func decode(_ type: Int16.Type,  forKey key: Key) throws -> Int16  { try primitive(key) }
-    func decode(_ type: Int32.Type,  forKey key: Key) throws -> Int32  { try primitive(key) }
-    func decode(_ type: Int64.Type,  forKey key: Key) throws -> Int64  { try primitive(key) }
-    func decode(_ type: UInt.Type,   forKey key: Key) throws -> UInt   { try primitive(key) }
-    func decode(_ type: UInt8.Type,  forKey key: Key) throws -> UInt8  { try primitive(key) }
+    func decode(_ type: Float.Type, forKey key: Key) throws -> Float { try primitive(key) }
+    func decode(_ type: Int.Type, forKey key: Key) throws -> Int { try primitive(key) }
+    func decode(_ type: Int8.Type, forKey key: Key) throws -> Int8 { try primitive(key) }
+    func decode(_ type: Int16.Type, forKey key: Key) throws -> Int16 { try primitive(key) }
+    func decode(_ type: Int32.Type, forKey key: Key) throws -> Int32 { try primitive(key) }
+    func decode(_ type: Int64.Type, forKey key: Key) throws -> Int64 { try primitive(key) }
+    func decode(_ type: UInt.Type, forKey key: Key) throws -> UInt { try primitive(key) }
+    func decode(_ type: UInt8.Type, forKey key: Key) throws -> UInt8 { try primitive(key) }
     func decode(_ type: UInt16.Type, forKey key: Key) throws -> UInt16 { try primitive(key) }
     func decode(_ type: UInt32.Type, forKey key: Key) throws -> UInt32 { try primitive(key) }
     func decode(_ type: UInt64.Type, forKey key: Key) throws -> UInt64 { try primitive(key) }
@@ -191,11 +204,26 @@ private struct _KeyedContainer<Key: CodingKey>: KeyedDecodingContainerProtocol {
             return d as! T
         }
 
-        // Fallback: nested decode (e.g. enums with RawRepresentable backing)
+        // For TEXT and BLOB columns, try the complex column strategy first.
+        // This correctly handles arrays, dictionaries, and nested structs whose
+        // data is encoded as JSON (or another format) in the column.
+        // If the strategy fails (e.g. a string-backed enum stored as a raw value
+        // rather than as JSON), fall through to the nested row-decoder path.
+        if let strategy = complexStrategy {
+            switch value {
+            case .text, .blob:
+                do { return try strategy.decode(T.self, from: value) } catch {}
+            default: break
+            }
+        }
+
+        // Nested decode — handles enums with RawRepresentable backing and
+        // custom single-scalar Codable types.
         let nested = _RowDecoder(
             row: row,
             codingPath: codingPath + [key],
-            dateStrategy: dateStrategy)
+            dateStrategy: dateStrategy,
+            complexStrategy: complexStrategy)
         return try T(from: nested)
     }
 
@@ -204,31 +232,40 @@ private struct _KeyedContainer<Key: CodingKey>: KeyedDecodingContainerProtocol {
     func nestedContainer<NK: CodingKey>(keyedBy type: NK.Type, forKey key: Key) throws
         -> KeyedDecodingContainer<NK>
     {
-        KeyedDecodingContainer(_KeyedContainer<NK>(
-            row: row, codingPath: codingPath + [key], dateStrategy: dateStrategy))
+        KeyedDecodingContainer(
+            _KeyedContainer<NK>(
+                row: row, codingPath: codingPath + [key], dateStrategy: dateStrategy,
+                complexStrategy: complexStrategy))
     }
 
     func nestedUnkeyedContainer(forKey key: Key) throws -> UnkeyedDecodingContainer {
-        throw DecodingError.dataCorrupted(.init(
-            codingPath: codingPath + [key],
-            debugDescription: "RowDecoder does not support unkeyed nested containers."))
+        throw DecodingError.dataCorrupted(
+            .init(
+                codingPath: codingPath + [key],
+                debugDescription: "RowDecoder does not support unkeyed nested containers."))
     }
 
     func superDecoder() throws -> Decoder {
-        _RowDecoder(row: row, codingPath: codingPath, dateStrategy: dateStrategy)
+        _RowDecoder(
+            row: row, codingPath: codingPath, dateStrategy: dateStrategy,
+            complexStrategy: complexStrategy)
     }
 
     func superDecoder(forKey key: Key) throws -> Decoder {
-        _RowDecoder(row: row, codingPath: codingPath + [key], dateStrategy: dateStrategy)
+        _RowDecoder(
+            row: row, codingPath: codingPath + [key], dateStrategy: dateStrategy,
+            complexStrategy: complexStrategy)
     }
 
     // MARK: - Private helpers
 
     private func requireValue(forKey key: Key) throws -> Value {
         guard let v = row[key.stringValue] else {
-            throw DecodingError.keyNotFound(key, .init(
-                codingPath: codingPath,
-                debugDescription: "Column '\(key.stringValue)' not found in row."))
+            throw DecodingError.keyNotFound(
+                key,
+                .init(
+                    codingPath: codingPath,
+                    debugDescription: "Column '\(key.stringValue)' not found in row."))
         }
         return v
     }
@@ -244,8 +281,10 @@ private struct _KeyedContainer<Key: CodingKey>: KeyedDecodingContainerProtocol {
     private func mismatch(_ key: Key, expected: String, got: Value) -> DecodingError {
         DecodingError.typeMismatch(
             Value.self,
-            .init(codingPath: codingPath + [key],
-                  debugDescription: "Expected \(expected) for column '\(key.stringValue)', got \(got)."))
+            .init(
+                codingPath: codingPath + [key],
+                debugDescription:
+                    "Expected \(expected) for column '\(key.stringValue)', got \(got)."))
     }
 
     private func decodeDate(from value: Value, key: Key) throws -> Date {
@@ -256,31 +295,42 @@ private struct _KeyedContainer<Key: CodingKey>: KeyedDecodingContainerProtocol {
                 value: value, codingPath: codingPath + [key], dateStrategy: dateStrategy)
             return try Date(from: _SingleValueDecoder(container: svc))
         case .secondsSince1970:
-            guard let d = _doubleFrom(value) else { throw mismatch(key, expected: "seconds since 1970 (numeric)", got: value) }
+            guard let d = _doubleFrom(value) else {
+                throw mismatch(key, expected: "seconds since 1970 (numeric)", got: value)
+            }
             return Date(timeIntervalSince1970: d)
         case .millisecondsSince1970:
-            guard let d = _doubleFrom(value) else { throw mismatch(key, expected: "milliseconds since 1970 (numeric)", got: value) }
+            guard let d = _doubleFrom(value) else {
+                throw mismatch(key, expected: "milliseconds since 1970 (numeric)", got: value)
+            }
             return Date(timeIntervalSince1970: d / 1000)
         case .iso8601:
-            guard case .text(let s) = value else { throw mismatch(key, expected: "ISO 8601 text", got: value) }
+            guard case .text(let s) = value else {
+                throw mismatch(key, expected: "ISO 8601 text", got: value)
+            }
             if #available(macOS 10.12, iOS 10.0, tvOS 10.0, watchOS 3.0, *) {
                 guard let date = ISO8601DateFormatter().date(from: s) else {
-                    throw DecodingError.dataCorrupted(.init(
-                        codingPath: codingPath + [key],
-                        debugDescription: "Invalid ISO 8601 date string: '\(s)'"))
+                    throw DecodingError.dataCorrupted(
+                        .init(
+                            codingPath: codingPath + [key],
+                            debugDescription: "Invalid ISO 8601 date string: '\(s)'"))
                 }
                 return date
             } else {
-                throw DecodingError.dataCorrupted(.init(
-                    codingPath: codingPath + [key],
-                    debugDescription: "ISO8601DateFormatter unavailable on this platform."))
+                throw DecodingError.dataCorrupted(
+                    .init(
+                        codingPath: codingPath + [key],
+                        debugDescription: "ISO8601DateFormatter unavailable on this platform."))
             }
         case .formatted(let formatter):
-            guard case .text(let s) = value else { throw mismatch(key, expected: "formatted date text", got: value) }
+            guard case .text(let s) = value else {
+                throw mismatch(key, expected: "formatted date text", got: value)
+            }
             guard let date = formatter.date(from: s) else {
-                throw DecodingError.dataCorrupted(.init(
-                    codingPath: codingPath + [key],
-                    debugDescription: "DateFormatter could not parse '\(s)'."))
+                throw DecodingError.dataCorrupted(
+                    .init(
+                        codingPath: codingPath + [key],
+                        debugDescription: "DateFormatter could not parse '\(s)'."))
             }
             return date
         case .custom(let fn):
@@ -292,7 +342,7 @@ private struct _KeyedContainer<Key: CodingKey>: KeyedDecodingContainerProtocol {
 // MARK: - Single-value container
 
 private struct _SingleValueContainer: SingleValueDecodingContainer {
-    let value: Value?   // nil means column was absent
+    let value: Value?  // nil means column was absent
     let codingPath: [CodingKey]
     let dateStrategy: RowDecoder.DateDecodingStrategy
 
@@ -302,17 +352,17 @@ private struct _SingleValueContainer: SingleValueDecodingContainer {
         return false
     }
 
-    func decode(_ type: Bool.Type)   throws -> Bool   { try prim() }
+    func decode(_ type: Bool.Type) throws -> Bool { try prim() }
     func decode(_ type: String.Type) throws -> String { try prim() }
     func decode(_ type: Double.Type) throws -> Double { try prim() }
-    func decode(_ type: Float.Type)  throws -> Float  { try prim() }
-    func decode(_ type: Int.Type)    throws -> Int    { try prim() }
-    func decode(_ type: Int8.Type)   throws -> Int8   { try prim() }
-    func decode(_ type: Int16.Type)  throws -> Int16  { try prim() }
-    func decode(_ type: Int32.Type)  throws -> Int32  { try prim() }
-    func decode(_ type: Int64.Type)  throws -> Int64  { try prim() }
-    func decode(_ type: UInt.Type)   throws -> UInt   { try prim() }
-    func decode(_ type: UInt8.Type)  throws -> UInt8  { try prim() }
+    func decode(_ type: Float.Type) throws -> Float { try prim() }
+    func decode(_ type: Int.Type) throws -> Int { try prim() }
+    func decode(_ type: Int8.Type) throws -> Int8 { try prim() }
+    func decode(_ type: Int16.Type) throws -> Int16 { try prim() }
+    func decode(_ type: Int32.Type) throws -> Int32 { try prim() }
+    func decode(_ type: Int64.Type) throws -> Int64 { try prim() }
+    func decode(_ type: UInt.Type) throws -> UInt { try prim() }
+    func decode(_ type: UInt8.Type) throws -> UInt8 { try prim() }
     func decode(_ type: UInt16.Type) throws -> UInt16 { try prim() }
     func decode(_ type: UInt32.Type) throws -> UInt32 { try prim() }
     func decode(_ type: UInt64.Type) throws -> UInt64 { try prim() }
@@ -342,14 +392,19 @@ private struct _SingleValueContainer: SingleValueDecodingContainer {
 
     private func requireValue() throws -> Value {
         guard let v = value else {
-            throw DecodingError.valueNotFound(Value.self, .init(
-                codingPath: codingPath,
-                debugDescription: "Column is absent from this row."))
+            throw DecodingError.valueNotFound(
+                Value.self,
+                .init(
+                    codingPath: codingPath,
+                    debugDescription: "Column is absent from this row."))
         }
         if case .null = v {
-            throw DecodingError.valueNotFound(Value.self, .init(
-                codingPath: codingPath,
-                debugDescription: "Column value is NULL; use Optional<T> to handle NULL columns."))
+            throw DecodingError.valueNotFound(
+                Value.self,
+                .init(
+                    codingPath: codingPath,
+                    debugDescription:
+                        "Column value is NULL; use Optional<T> to handle NULL columns."))
         }
         return v
     }
@@ -357,8 +412,9 @@ private struct _SingleValueContainer: SingleValueDecodingContainer {
     private func mismatch(_ expected: String, got: Value) -> DecodingError {
         DecodingError.typeMismatch(
             Value.self,
-            .init(codingPath: codingPath,
-                  debugDescription: "Expected \(expected), got \(got)."))
+            .init(
+                codingPath: codingPath,
+                debugDescription: "Expected \(expected), got \(got)."))
     }
 }
 
@@ -369,12 +425,16 @@ private struct _SingleValueDecoder: Decoder {
     var codingPath: [CodingKey] { container.codingPath }
     let userInfo: [CodingUserInfoKey: Any] = [:]
     func container<Key: CodingKey>(keyedBy type: Key.Type) throws -> KeyedDecodingContainer<Key> {
-        throw DecodingError.dataCorrupted(.init(codingPath: codingPath,
-            debugDescription: "Cannot decode keyed container from a single value."))
+        throw DecodingError.dataCorrupted(
+            .init(
+                codingPath: codingPath,
+                debugDescription: "Cannot decode keyed container from a single value."))
     }
     func unkeyedContainer() throws -> UnkeyedDecodingContainer {
-        throw DecodingError.dataCorrupted(.init(codingPath: codingPath,
-            debugDescription: "Cannot decode unkeyed container from a single value."))
+        throw DecodingError.dataCorrupted(
+            .init(
+                codingPath: codingPath,
+                debugDescription: "Cannot decode unkeyed container from a single value."))
     }
     func singleValueContainer() -> SingleValueDecodingContainer { container }
 }
@@ -386,63 +446,109 @@ private protocol _RowPrimitive {
     static func _decode(from value: Value) -> Self?
 }
 
-extension Bool:   _RowPrimitive {
-    static func _decode(from v: Value) -> Bool?   {
-        switch v { case .integer(let i): return i != 0; case .real(let d): return d != 0; default: return nil }
+extension Bool: _RowPrimitive {
+    static func _decode(from v: Value) -> Bool? {
+        switch v {
+        case .integer(let i): return i != 0
+        case .real(let d): return d != 0
+        default: return nil
+        }
     }
 }
 extension String: _RowPrimitive {
-    static func _decode(from v: Value) -> String? { if case .text(let s) = v { return s }; return nil }
+    static func _decode(from v: Value) -> String? {
+        if case .text(let s) = v { return s }
+        return nil
+    }
 }
 extension Double: _RowPrimitive {
     static func _decode(from v: Value) -> Double? {
-        switch v { case .real(let d): return d; case .integer(let i): return Double(i); default: return nil }
+        switch v {
+        case .real(let d): return d
+        case .integer(let i): return Double(i)
+        default: return nil
+        }
     }
 }
-extension Float:  _RowPrimitive {
-    static func _decode(from v: Value) -> Float?  {
-        switch v { case .real(let d): return Float(d); case .integer(let i): return Float(i); default: return nil }
+extension Float: _RowPrimitive {
+    static func _decode(from v: Value) -> Float? {
+        switch v {
+        case .real(let d): return Float(d)
+        case .integer(let i): return Float(i)
+        default: return nil
+        }
     }
 }
-extension Int:    _RowPrimitive {
-    static func _decode(from v: Value) -> Int?    {
-        switch v { case .integer(let i): return Int(exactly: i) ?? nil; case .real(let d): return Int(exactly: d) ?? nil; default: return nil }
+extension Int: _RowPrimitive {
+    static func _decode(from v: Value) -> Int? {
+        switch v {
+        case .integer(let i): return Int(exactly: i) ?? nil
+        case .real(let d): return Int(exactly: d) ?? nil
+        default: return nil
+        }
     }
 }
-extension Int8:   _RowPrimitive {
-    static func _decode(from v: Value) -> Int8?   { if case .integer(let i) = v { return Int8(exactly: i) }; return nil }
+extension Int8: _RowPrimitive {
+    static func _decode(from v: Value) -> Int8? {
+        if case .integer(let i) = v { return Int8(exactly: i) }
+        return nil
+    }
 }
-extension Int16:  _RowPrimitive {
-    static func _decode(from v: Value) -> Int16?  { if case .integer(let i) = v { return Int16(exactly: i) }; return nil }
+extension Int16: _RowPrimitive {
+    static func _decode(from v: Value) -> Int16? {
+        if case .integer(let i) = v { return Int16(exactly: i) }
+        return nil
+    }
 }
-extension Int32:  _RowPrimitive {
-    static func _decode(from v: Value) -> Int32?  { if case .integer(let i) = v { return Int32(exactly: i) }; return nil }
+extension Int32: _RowPrimitive {
+    static func _decode(from v: Value) -> Int32? {
+        if case .integer(let i) = v { return Int32(exactly: i) }
+        return nil
+    }
 }
-extension Int64:  _RowPrimitive {
-    static func _decode(from v: Value) -> Int64?  { if case .integer(let i) = v { return i }; return nil }
+extension Int64: _RowPrimitive {
+    static func _decode(from v: Value) -> Int64? {
+        if case .integer(let i) = v { return i }
+        return nil
+    }
 }
-extension UInt:   _RowPrimitive {
-    static func _decode(from v: Value) -> UInt?   { if case .integer(let i) = v { return UInt(exactly: i) }; return nil }
+extension UInt: _RowPrimitive {
+    static func _decode(from v: Value) -> UInt? {
+        if case .integer(let i) = v { return UInt(exactly: i) }
+        return nil
+    }
 }
-extension UInt8:  _RowPrimitive {
-    static func _decode(from v: Value) -> UInt8?  { if case .integer(let i) = v { return UInt8(exactly: i) }; return nil }
+extension UInt8: _RowPrimitive {
+    static func _decode(from v: Value) -> UInt8? {
+        if case .integer(let i) = v { return UInt8(exactly: i) }
+        return nil
+    }
 }
 extension UInt16: _RowPrimitive {
-    static func _decode(from v: Value) -> UInt16? { if case .integer(let i) = v { return UInt16(exactly: i) }; return nil }
+    static func _decode(from v: Value) -> UInt16? {
+        if case .integer(let i) = v { return UInt16(exactly: i) }
+        return nil
+    }
 }
 extension UInt32: _RowPrimitive {
-    static func _decode(from v: Value) -> UInt32? { if case .integer(let i) = v { return UInt32(exactly: i) }; return nil }
+    static func _decode(from v: Value) -> UInt32? {
+        if case .integer(let i) = v { return UInt32(exactly: i) }
+        return nil
+    }
 }
 extension UInt64: _RowPrimitive {
-    static func _decode(from v: Value) -> UInt64? { if case .integer(let i) = v { return UInt64(bitPattern: i) }; return nil }
+    static func _decode(from v: Value) -> UInt64? {
+        if case .integer(let i) = v { return UInt64(bitPattern: i) }
+        return nil
+    }
 }
 
 // MARK: - Double helper (used by date decoding)
 
 private func _doubleFrom(_ value: Value) -> Double? {
     switch value {
-    case .real(let d):    return d
+    case .real(let d): return d
     case .integer(let i): return Double(i)
-    default:              return nil
+    default: return nil
     }
 }

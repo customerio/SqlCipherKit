@@ -75,6 +75,22 @@ private enum EventSchema {
     }
 }
 
+private enum CatalogSchema {
+    static let table = TableName("catalogs")
+    static let id = ColumnRef("id")
+    static let name = ColumnRef("name")
+    static let tags = ColumnRef("tags")
+    static let ratings = ColumnRef("ratings")
+
+    static func createTable() -> CreateTable {
+        CreateTable(table)
+            .column(id.name, .integer, .primaryKey)
+            .column(name.name, .text, .notNull)
+            .column(tags.name, .text, .notNull)  // JSON array
+            .column(ratings.name, .text)  // JSON dict, nullable
+    }
+}
+
 // MARK: - Fixture model types
 
 /// Simple model — caller-supplied Int primary key.
@@ -116,6 +132,16 @@ private struct Event: TableRecord, Equatable {
     var id: Int
     var name: String
     var notes: String?
+}
+
+/// Complex column types — array and optional dictionary stored as JSON.
+private struct Catalog: TableRecord, Equatable {
+    static let tableName = CatalogSchema.table
+    static let primaryKey = \Catalog.id
+    var id: Int
+    var name: String
+    var tags: [String]
+    var ratings: [String: Double]?
 }
 
 // MARK: - RowEncoder unit tests
@@ -594,5 +620,53 @@ struct FetchOneTests {
         let saved = try await db.save(Note(id: nil, title: "Hello", body: "World"))
         let fetched = try await db.fetchOne(Note.self, id: saved.id)
         #expect(fetched?.title == "Hello")
+    }
+}
+
+// MARK: - ComplexColumnStrategy tests
+
+@Suite("Database – complex column strategy (JSON)")
+struct ComplexColumnTests {
+
+    @Test("Array column round-trips via JSON")
+    func arrayColumnRoundTrip() async throws {
+        let db = try makeDB()
+        try await db.execute(CatalogSchema.createTable())
+        let original = Catalog(id: 1, name: "Tech", tags: ["swift", "sql", "ios"], ratings: nil)
+        try await db.save(original)
+        let fetched = try await db.fetchOne(Catalog.self, id: 1)
+        #expect(fetched == original)
+    }
+
+    @Test("Dictionary column round-trips via JSON")
+    func dictionaryColumnRoundTrip() async throws {
+        let db = try makeDB()
+        try await db.execute(CatalogSchema.createTable())
+        let original = Catalog(
+            id: 2, name: "Lang", tags: ["rust"],
+            ratings: ["performance": 9.5, "ergonomics": 8.0])
+        try await db.save(original)
+        let fetched = try await db.fetchOne(Catalog.self, id: 2)
+        #expect(fetched == original)
+    }
+
+    @Test("Optional complex column stores nil as NULL")
+    func optionalComplexColumnNil() async throws {
+        let db = try makeDB()
+        try await db.execute(CatalogSchema.createTable())
+        let original = Catalog(id: 3, name: "Empty", tags: [], ratings: nil)
+        try await db.save(original)
+        let fetched = try await db.fetchOne(Catalog.self, id: 3)
+        #expect(fetched?.ratings == nil)
+    }
+
+    @Test("nil strategy throws on complex type")
+    func nilStrategyThrows() async throws {
+        let db = try Database(path: tempDBPath(), key: "testkey", complexColumnStrategy: nil)
+        try await db.execute(CatalogSchema.createTable())
+        let catalog = Catalog(id: 4, name: "Fail", tags: ["a", "b"], ratings: nil)
+        await #expect(throws: (any Error).self) {
+            try await db.save(catalog)
+        }
     }
 }

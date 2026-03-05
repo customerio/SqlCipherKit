@@ -64,24 +64,46 @@ public actor Database {
     /// is only ever accessed from within the actor's executor.
     private nonisolated(unsafe) let statementCache: StatementCache
 
+    // MARK: - TableRecord configuration
+
+    /// Strategy used to encode and decode complex Swift properties —
+    /// arrays, dictionaries, and nested `Codable` structs — that cannot be
+    /// stored as a single scalar SQL value.
+    ///
+    /// Defaults to ``ComplexColumnStrategy/json``, which stores them as UTF-8
+    /// JSON text.  Pass `nil` at initialisation to make the encoder throw
+    /// loudly when it encounters an unencodable property, which can help
+    /// surface schema bugs early in development.
+    public let complexColumnStrategy: ComplexColumnStrategy?
+
     // MARK: - Initialisation
 
     /// Opens or creates an encrypted database at `path`.
     ///
     /// - Parameters:
-    ///   - path:    Filesystem path for the database file.
-    ///   - key:     Passphrase passed through PBKDF2-HMAC-SHA512 (SqlCipher default).
-    ///   - walMode: When `true` (the default), sets `PRAGMA journal_mode=WAL`
-    ///              immediately after opening.  WAL provides better read/write
-    ///              concurrency and faster writes than the default rollback
-    ///              journal.  The setting is stored in the database file, so it
-    ///              only needs to be applied once per database; subsequent opens
-    ///              can pass `false` if preferred.
+    ///   - path:                  Filesystem path for the database file.
+    ///   - key:                   Passphrase passed through PBKDF2-HMAC-SHA512 (SqlCipher default).
+    ///   - walMode:               When `true` (the default), sets `PRAGMA journal_mode=WAL`
+    ///                            immediately after opening.  WAL provides better read/write
+    ///                            concurrency and faster writes than the default rollback
+    ///                            journal.  The setting is stored in the database file, so it
+    ///                            only needs to be applied once per database; subsequent opens
+    ///                            can pass `false` if preferred.
+    ///   - complexColumnStrategy: How to encode and decode properties that cannot be stored
+    ///                            as a scalar SQL value (arrays, dicts, nested structs).
+    ///                            Defaults to ``ComplexColumnStrategy/json``.  Pass `nil` to
+    ///                            throw an error when such a property is encountered.
     ///
     /// - Throws: ``SqlCipherError/openFailed(message:)`` when the file cannot
     ///   be opened, or ``SqlCipherError/keyFailed(code:)`` when the key is
     ///   rejected (wrong key for an existing database).
-    public init(path: String, key: String, walMode: Bool = true) throws {
+    public init(
+        path: String,
+        key: String,
+        walMode: Bool = true,
+        complexColumnStrategy: ComplexColumnStrategy? = .json
+    ) throws {
+        self.complexColumnStrategy = complexColumnStrategy
         var db: OpaquePointer?
         let openRC = sqlite3_open(path, &db)
         guard openRC == SQLITE_OK, let opened = db else {

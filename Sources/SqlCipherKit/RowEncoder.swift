@@ -68,6 +68,11 @@ public final class RowEncoder {
     /// Strategy used to encode `Date` values.  Defaults to `.deferredToDate`.
     public var dateEncodingStrategy: DateEncodingStrategy = .deferredToDate
 
+    /// Strategy used to encode properties that cannot be mapped to a scalar
+    /// SQL value (arrays, dictionaries, nested structs).  Defaults to ``ComplexColumnStrategy/json``.
+    /// Set to `nil` to throw an error when such a property is encountered.
+    public var complexColumnStrategy: ComplexColumnStrategy? = .json
+
     // MARK: - Init
 
     public init() {}
@@ -82,7 +87,8 @@ public final class RowEncoder {
     public func encode<T: Encodable>(_ value: T) throws -> [(key: String, value: Value)] {
         let storage = _EncoderStorage()
         let encoder = _RowEncoder(
-            storage: storage, codingPath: [], dateStrategy: dateEncodingStrategy)
+            storage: storage, codingPath: [], dateStrategy: dateEncodingStrategy,
+            complexStrategy: complexColumnStrategy)
         try value.encode(to: encoder)
         return storage.columns
     }
@@ -106,11 +112,13 @@ private struct _RowEncoder: Encoder {
     let codingPath: [CodingKey]
     let userInfo: [CodingUserInfoKey: Any] = [:]
     let dateStrategy: RowEncoder.DateEncodingStrategy
+    let complexStrategy: ComplexColumnStrategy?
 
     func container<Key: CodingKey>(keyedBy type: Key.Type) -> KeyedEncodingContainer<Key> {
         KeyedEncodingContainer(
             _KeyedContainer<Key>(
-                storage: storage, codingPath: codingPath, dateStrategy: dateStrategy))
+                storage: storage, codingPath: codingPath, dateStrategy: dateStrategy,
+                complexStrategy: complexStrategy))
     }
 
     func unkeyedContainer() -> UnkeyedEncodingContainer {
@@ -119,7 +127,9 @@ private struct _RowEncoder: Encoder {
 
     func singleValueContainer() -> SingleValueEncodingContainer {
         // Used when encoding an Optional wrapper that itself encodes to a single value.
-        _SingleValueContainer(storage: storage, codingPath: codingPath, dateStrategy: dateStrategy)
+        _SingleValueContainer(
+            storage: storage, codingPath: codingPath, dateStrategy: dateStrategy,
+            complexStrategy: complexStrategy)
     }
 }
 
@@ -129,6 +139,7 @@ private struct _KeyedContainer<Key: CodingKey>: KeyedEncodingContainerProtocol {
     let storage: _EncoderStorage
     let codingPath: [CodingKey]
     let dateStrategy: RowEncoder.DateEncodingStrategy
+    let complexStrategy: ComplexColumnStrategy?
 
     // MARK: nil / Optional
 
@@ -257,12 +268,28 @@ private struct _KeyedContainer<Key: CodingKey>: KeyedEncodingContainerProtocol {
             storage.append(key: key.stringValue, value: sqlVal.sqlValue)
             return
         }
-        // Fallback: encode as a single value (handles enums with RawRepresentable backing,
-        // nested Codable types that ultimately reduce to one SQL value, etc.)
+        // Fallback: try to capture as a single scalar (handles enum raw values etc.)
         let capture = _SingleValueCaptureEncoder(
             codingPath: codingPath + [key], dateStrategy: dateStrategy)
-        try value.encode(to: capture)
-        storage.append(key: key.stringValue, value: capture.captured ?? .null)
+        var captureThrew: (any Error)?
+        do { try value.encode(to: capture) } catch { captureThrew = error }
+        if let captured = capture.captured {
+            storage.append(key: key.stringValue, value: captured)
+            return
+        }
+        // Complex type (array, dict, nested struct): apply the column strategy.
+        if let strategy = complexStrategy {
+            storage.append(key: key.stringValue, value: try strategy.encode(value))
+            return
+        }
+        if let err = captureThrew { throw err }
+        throw EncodingError.invalidValue(
+            value,
+            .init(
+                codingPath: codingPath + [key],
+                debugDescription:
+                    "RowEncoder cannot encode \(T.self) as a scalar SQL value. "
+                    + "Set complexColumnStrategy on the Database to handle complex types."))
     }
 
     // MARK: Nested / super
@@ -272,7 +299,8 @@ private struct _KeyedContainer<Key: CodingKey>: KeyedEncodingContainerProtocol {
     ) -> KeyedEncodingContainer<NK> {
         KeyedEncodingContainer(
             _KeyedContainer<NK>(
-                storage: storage, codingPath: codingPath + [key], dateStrategy: dateStrategy))
+                storage: storage, codingPath: codingPath + [key], dateStrategy: dateStrategy,
+                complexStrategy: complexStrategy))
     }
 
     mutating func nestedUnkeyedContainer(forKey key: Key) -> UnkeyedEncodingContainer {
@@ -280,11 +308,15 @@ private struct _KeyedContainer<Key: CodingKey>: KeyedEncodingContainerProtocol {
     }
 
     mutating func superEncoder() -> Encoder {
-        _RowEncoder(storage: storage, codingPath: codingPath, dateStrategy: dateStrategy)
+        _RowEncoder(
+            storage: storage, codingPath: codingPath, dateStrategy: dateStrategy,
+            complexStrategy: complexStrategy)
     }
 
     mutating func superEncoder(forKey key: Key) -> Encoder {
-        _RowEncoder(storage: storage, codingPath: codingPath + [key], dateStrategy: dateStrategy)
+        _RowEncoder(
+            storage: storage, codingPath: codingPath + [key], dateStrategy: dateStrategy,
+            complexStrategy: complexStrategy)
     }
 }
 
@@ -298,6 +330,7 @@ private struct _SingleValueContainer: SingleValueEncodingContainer {
     let storage: _EncoderStorage
     let codingPath: [CodingKey]
     let dateStrategy: RowEncoder.DateEncodingStrategy
+    let complexStrategy: ComplexColumnStrategy?
 
     private var key: String { codingPath.last?.stringValue ?? "" }
 
@@ -338,10 +371,27 @@ private struct _SingleValueContainer: SingleValueEncodingContainer {
             storage.append(key: key, value: sql.sqlValue)
             return
         }
-        // Re-encode via the capture path
+        // Fallback: try to capture as a single scalar (handles enum raw values etc.)
         let capture = _SingleValueCaptureEncoder(codingPath: codingPath, dateStrategy: dateStrategy)
-        try value.encode(to: capture)
-        storage.append(key: key, value: capture.captured ?? .null)
+        var captureThrew: (any Error)?
+        do { try value.encode(to: capture) } catch { captureThrew = error }
+        if let captured = capture.captured {
+            storage.append(key: key, value: captured)
+            return
+        }
+        // Complex type: apply the column strategy.
+        if let strategy = complexStrategy {
+            storage.append(key: key, value: try strategy.encode(value))
+            return
+        }
+        if let err = captureThrew { throw err }
+        throw EncodingError.invalidValue(
+            value,
+            .init(
+                codingPath: codingPath,
+                debugDescription:
+                    "RowEncoder cannot encode \(T.self) as a scalar SQL value. "
+                    + "Set complexColumnStrategy on the Database to handle complex types."))
     }
 }
 

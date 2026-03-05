@@ -73,13 +73,10 @@ extension Database {
     /// let allWidgets = try await db.fetch(Widget.self)
     /// ```
     ///
-    /// - Parameters:
-    ///   - type:    The `TableRecord` type to fetch.  Can be inferred from context.
-    ///   - decoder: The ``RowDecoder`` to use.  Defaults to a fresh instance.
-    public func fetch<T: TableRecord>(
-        _ type: T.Type = T.self,
-        decoder: RowDecoder = RowDecoder()
-    ) throws -> [T] {
+    /// - Parameter type: The `TableRecord` type to fetch.  Can be inferred from context.
+    public func fetch<T: TableRecord>(_ type: T.Type = T.self) throws -> [T] {
+        let decoder = RowDecoder()
+        decoder.complexColumnStrategy = complexColumnStrategy
         let q = Select(.all).from(T.tableName).build()
         let rows = try withConnection { try $0._query(q) }
         return try decoder.decode(T.self, from: rows)
@@ -105,13 +102,13 @@ extension Database {
     ///   - type:      The `TableRecord` type to fetch.
     ///   - predicate: A WHERE ``Expression`` built with ``col(_:)`` and expression operators.
     ///   - params:    Variadic ``ParamBinding`` values for any ``Param`` references in `predicate`.
-    ///   - decoder:   The ``RowDecoder`` to use.  Defaults to a fresh instance.
     public func fetch<T: TableRecord>(
         _ type: T.Type = T.self,
         where predicate: Expression,
-        _ params: ParamBinding...,
-        decoder: RowDecoder = RowDecoder()
+        _ params: ParamBinding...
     ) throws -> [T] {
+        let decoder = RowDecoder()
+        decoder.complexColumnStrategy = complexColumnStrategy
         let q = Select(.all).from(T.tableName).where(predicate).build(params: params)
         let rows = try withConnection { try $0._query(q) }
         return try decoder.decode(T.self, from: rows)
@@ -126,14 +123,11 @@ extension Database {
     /// ```
     ///
     /// - Parameters:
-    ///   - type:    The `TableRecord` type to fetch.
-    ///   - id:      The primary key value to look up.
-    ///   - decoder: The ``RowDecoder`` to use.  Defaults to a fresh instance.
-    public func fetchOne<T: TableRecord>(
-        _ type: T.Type = T.self,
-        id: T.ID,
-        decoder: RowDecoder = RowDecoder()
-    ) throws -> T? {
+    ///   - type: The `TableRecord` type to fetch.  Can be inferred from context.
+    ///   - id:   The primary key value to look up.
+    public func fetchOne<T: TableRecord>(_ type: T.Type = T.self, id: T.ID) throws -> T? {
+        let decoder = RowDecoder()
+        decoder.complexColumnStrategy = complexColumnStrategy
         let predicate = Expression.compare(ColumnRef(T.primaryKeyName), .eq, .literal(id))
         let q = Select(.all).from(T.tableName).where(predicate).limit(1).build()
         let rows = try withConnection { try $0._query(q) }
@@ -145,6 +139,7 @@ extension Database {
 
     private func _save<T: TableRecord>(_ record: T) throws -> T {
         let encoder = RowEncoder()
+        encoder.complexColumnStrategy = complexColumnStrategy
         let columns = try encoder.encode(record)
 
         guard !columns.isEmpty else { throw TableRecordError.noColumnsToInsert }
