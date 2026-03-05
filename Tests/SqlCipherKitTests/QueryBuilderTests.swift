@@ -524,6 +524,107 @@ struct AlterTableTests {
         let q = AlterTable(t, addColumn: def).build()
         #expect(q.sql == "ALTER TABLE users ADD COLUMN score REAL DEFAULT 0.0")
     }
+
+    @Test("drop column")
+    func dropColumn() {
+        let t = TableName("users")
+        let q = AlterTable(t, dropColumn: "legacy_field").build()
+        #expect(q.sql == "ALTER TABLE users DROP COLUMN legacy_field")
+        #expect(q.bindings.isEmpty)
+    }
+}
+
+// MARK: - DropTable rendering tests
+
+@Suite("DropTable")
+struct DropTableTests {
+
+    @Test("IF EXISTS is default")
+    func ifExistsDefault() {
+        let q = DropTable(TableName("users")).build()
+        #expect(q.sql == "DROP TABLE IF EXISTS users")
+        #expect(q.bindings.isEmpty)
+    }
+
+    @Test("without IF EXISTS guard")
+    func withoutGuard() {
+        let q = DropTable(TableName("users"), ifExists: false).build()
+        #expect(q.sql == "DROP TABLE users")
+    }
+}
+
+// MARK: - CreateIndex rendering tests
+
+@Suite("CreateIndex")
+struct CreateIndexTests {
+
+    @Test("simple single-column index")
+    func simpleIndex() {
+        let users = TableName("users")
+        let q = CreateIndex("idx_users_email", on: users)
+            .column("email")
+            .build()
+        #expect(q.sql == "CREATE INDEX IF NOT EXISTS idx_users_email ON users (email)")
+        #expect(q.bindings.isEmpty)
+    }
+
+    @Test("unique index")
+    func uniqueIndex() {
+        let users = TableName("users")
+        let q = CreateIndex("idx_users_email", on: users, unique: true)
+            .column("email")
+            .build()
+        #expect(q.sql == "CREATE UNIQUE INDEX IF NOT EXISTS idx_users_email ON users (email)")
+    }
+
+    @Test("composite index")
+    func compositeIndex() {
+        let users = TableName("users")
+        let q = CreateIndex("idx_users_name_email", on: users)
+            .column("name")
+            .column("email")
+            .build()
+        #expect(q.sql == "CREATE INDEX IF NOT EXISTS idx_users_name_email ON users (name, email)")
+    }
+
+    @Test("column with explicit sort direction")
+    func sortDirection() {
+        let users = TableName("users")
+        let q = CreateIndex("idx_users_score", on: users)
+            .column("score", .descending)
+            .column("name", .ascending)
+            .build()
+        #expect(
+            q.sql == "CREATE INDEX IF NOT EXISTS idx_users_score ON users (score DESC, name ASC)")
+    }
+
+    @Test("without IF NOT EXISTS guard")
+    func withoutGuard() {
+        let users = TableName("users")
+        let q = CreateIndex("idx_users_email", on: users, ifNotExists: false)
+            .column("email")
+            .build()
+        #expect(q.sql == "CREATE INDEX idx_users_email ON users (email)")
+    }
+}
+
+// MARK: - DropIndex rendering tests
+
+@Suite("DropIndex")
+struct DropIndexTests {
+
+    @Test("IF EXISTS is default")
+    func ifExistsDefault() {
+        let q = DropIndex("idx_users_email").build()
+        #expect(q.sql == "DROP INDEX IF EXISTS idx_users_email")
+        #expect(q.bindings.isEmpty)
+    }
+
+    @Test("without IF EXISTS guard")
+    func withoutGuard() {
+        let q = DropIndex("idx_users_email", ifExists: false).build()
+        #expect(q.sql == "DROP INDEX idx_users_email")
+    }
 }
 
 // MARK: - Insert rendering tests
@@ -726,6 +827,26 @@ struct DDLDMLIntegrationTests {
         #expect(rows[0]["score"] == .real(0.0))
     }
 
+    @Test("AlterTable drops column")
+    func alterDropColumn() async throws {
+        let path = NSTemporaryDirectory() + "alt_drop_\(Int.random(in: 1_000_000...9_999_999)).db"
+        defer { try? FileManager.default.removeItem(atPath: path) }
+
+        let db = try Database(path: path, key: "alt-drop-test")
+        let users = TableName("users")
+
+        try await db.execute("CREATE TABLE users (id INTEGER PRIMARY KEY, name TEXT, legacy TEXT)")
+        try await db.execute("INSERT INTO users VALUES (1, 'Alice', 'old')")
+
+        try await db.execute(AlterTable(users, dropColumn: "legacy"))
+
+        // 'legacy' column should be gone; only id and name remain.
+        let rows = try await db.query(Select(.all).from(users))
+        #expect(rows.count == 1)
+        #expect(rows[0]["name"] == .text("Alice"))
+        #expect(rows[0]["legacy"] == nil)
+    }
+
     @Test("Insert OR IGNORE skips duplicate")
     func insertOrIgnore() async throws {
         let path = NSTemporaryDirectory() + "ins_test_\(Int.random(in: 1_000_000...9_999_999)).db"
@@ -749,5 +870,83 @@ struct DDLDMLIntegrationTests {
         let count = try await db.scalarQuery(
             Select(col("COUNT(*)")).from(tokens), as: Int.self)
         #expect(count == 1)
+    }
+
+    @Test("DropTable removes table")
+    func dropTable() async throws {
+        let path = NSTemporaryDirectory() + "droptbl_\(Int.random(in: 1_000_000...9_999_999)).db"
+        defer { try? FileManager.default.removeItem(atPath: path) }
+
+        let db = try Database(path: path, key: "drop-test")
+        try await db.execute("CREATE TABLE tmp (id INTEGER)")
+
+        try await db.execute(DropTable(TableName("tmp")))
+
+        let exists = try await db.scalarQuery(
+            "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='tmp'",
+            as: Int.self)
+        #expect(exists == 0)
+    }
+
+    @Test("DropTable IF EXISTS is a no-op on missing table")
+    func dropTableIfExists() async throws {
+        let path = NSTemporaryDirectory() + "droptbl2_\(Int.random(in: 1_000_000...9_999_999)).db"
+        defer { try? FileManager.default.removeItem(atPath: path) }
+
+        let db = try Database(path: path, key: "drop-test2")
+        // Should not throw even though the table doesn't exist.
+        try await db.execute(DropTable(TableName("nonexistent")))
+    }
+
+    @Test("CreateIndex and DropIndex round-trip")
+    func createAndDropIndex() async throws {
+        let path = NSTemporaryDirectory() + "idx_\(Int.random(in: 1_000_000...9_999_999)).db"
+        defer { try? FileManager.default.removeItem(atPath: path) }
+
+        let db = try Database(path: path, key: "idx-test")
+        let users = TableName("users")
+        try await db.execute("CREATE TABLE users (id INTEGER PRIMARY KEY, email TEXT, name TEXT)")
+
+        try await db.execute(
+            CreateIndex("idx_users_email", on: users, unique: true)
+                .column("email")
+        )
+
+        let idxExists = try await db.scalarQuery(
+            "SELECT COUNT(*) FROM sqlite_master WHERE type='index' AND name='idx_users_email'",
+            as: Int.self)
+        #expect(idxExists == 1)
+
+        try await db.execute(DropIndex("idx_users_email"))
+
+        let idxGone = try await db.scalarQuery(
+            "SELECT COUNT(*) FROM sqlite_master WHERE type='index' AND name='idx_users_email'",
+            as: Int.self)
+        #expect(idxGone == 0)
+    }
+
+    @Test("unique index enforces uniqueness")
+    func uniqueIndexEnforced() async throws {
+        let path = NSTemporaryDirectory() + "uqidx_\(Int.random(in: 1_000_000...9_999_999)).db"
+        defer { try? FileManager.default.removeItem(atPath: path) }
+
+        let db = try Database(path: path, key: "uqidx-test")
+        let users = TableName("users")
+        try await db.execute("CREATE TABLE users (id INTEGER PRIMARY KEY, email TEXT)")
+
+        try await db.execute(
+            CreateIndex("idx_users_email", on: users, unique: true)
+                .column("email")
+        )
+
+        try await db.execute("INSERT INTO users VALUES (1, 'a@b.com')")
+
+        var didThrow = false
+        do {
+            try await db.execute("INSERT INTO users VALUES (2, 'a@b.com')")
+        } catch {
+            didThrow = true
+        }
+        #expect(didThrow, "Unique index should have rejected duplicate email")
     }
 }

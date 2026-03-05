@@ -350,20 +350,6 @@ extension Connection {
 
 extension Connection {
 
-    // MARK: CreateTable
-
-    /// Builds and executes a ``CreateTable`` statement.
-    public func execute(_ create: CreateTable) throws {
-        try _execute(create.build())
-    }
-
-    // MARK: AlterTable
-
-    /// Builds and executes an ``AlterTable`` statement.
-    public func execute(_ alter: AlterTable) throws {
-        try _execute(alter.build())
-    }
-
     // MARK: Insert
 
     /// Builds and executes an ``Insert`` statement with variadic ``ParamBinding`` values.

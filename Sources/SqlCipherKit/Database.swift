@@ -259,20 +259,6 @@ public actor Database {
         return try withConnection { try $0._scalarQuery(q, as: T.self) }
     }
 
-    // MARK: - DDL / DML: CreateTable
-
-    /// Builds and executes a ``CreateTable`` statement.
-    public func execute(_ create: CreateTable) throws {
-        try withConnection { try $0._execute(create.build()) }
-    }
-
-    // MARK: - DDL / DML: AlterTable
-
-    /// Builds and executes an ``AlterTable`` statement.
-    public func execute(_ alter: AlterTable) throws {
-        try withConnection { try $0._execute(alter.build()) }
-    }
-
     // MARK: - DDL / DML: Insert
 
     /// Builds and executes an ``Insert`` with variadic ``ParamBinding`` values.

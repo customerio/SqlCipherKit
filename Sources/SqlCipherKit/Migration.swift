@@ -52,6 +52,21 @@ public final class MigrationContext: Sendable {
         try withConn { try $0._execute(alter.build()) }
     }
 
+    /// Drops a table using a ``DropTable`` builder.
+    public func execute(_ drop: DropTable) throws {
+        try withConn { try $0._execute(drop.build()) }
+    }
+
+    /// Creates an index using a ``CreateIndex`` builder.
+    public func execute(_ create: CreateIndex) throws {
+        try withConn { try $0._execute(create.build()) }
+    }
+
+    /// Drops an index using a ``DropIndex`` builder.
+    public func execute(_ drop: DropIndex) throws {
+        try withConn { try $0._execute(drop.build()) }
+    }
+
     // MARK: - Execute: DML builders
 
     /// Inserts a row using an ``Insert`` builder.

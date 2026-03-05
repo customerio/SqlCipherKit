@@ -2,7 +2,7 @@
 
 /// Builds an `ALTER TABLE` statement.
 ///
-/// SQLite supports three forms of `ALTER TABLE`, each represented by a
+/// SQLite supports four forms of `ALTER TABLE`, each represented by a
 /// separate initialiser:
 ///
 /// ```swift
@@ -17,6 +17,9 @@
 /// // Add a column
 /// AlterTable(users, addColumn: "bio", .text)
 /// AlterTable(users, addColumn: "score", .real, .notNull, .default(0.0))
+///
+/// // Drop a column (SQLite 3.35+)
+/// AlterTable(users, dropColumn: "legacy_field")
 /// ```
 ///
 /// Each `AlterTable` represents exactly one DDL operation, matching SQLite's
@@ -27,6 +30,7 @@ public struct AlterTable: Sendable {
         case renameTo(String)
         case renameColumn(String, to: String)
         case addColumn(ColumnDefinition)
+        case dropColumn(String)
     }
 
     private let table: TableName
@@ -49,9 +53,10 @@ public struct AlterTable: Sendable {
     }
 
     /// `ALTER TABLE <table> ADD COLUMN <name> <type> [constraints…]`
-    public init(_ table: TableName, addColumn name: String, _ type: ColumnType,
-                _ constraints: ColumnConstraint...)
-    {
+    public init(
+        _ table: TableName, addColumn name: String, _ type: ColumnType,
+        _ constraints: ColumnConstraint...
+    ) {
         self.table = table
         self.operation = .addColumn(ColumnDefinition(name, type, constraints: constraints))
     }
@@ -60,6 +65,16 @@ public struct AlterTable: Sendable {
     public init(_ table: TableName, addColumn def: ColumnDefinition) {
         self.table = table
         self.operation = .addColumn(def)
+    }
+
+    /// `ALTER TABLE <table> DROP COLUMN <name>`
+    ///
+    /// Requires SQLite 3.35.0 or later (bundled SqlCipher 4.x satisfies this).
+    /// The column must not be referenced by an index, primary key, unique
+    /// constraint, or CHECK constraint — SQLite will return an error if it is.
+    public init(_ table: TableName, dropColumn name: String) {
+        self.table = table
+        self.operation = .dropColumn(name)
     }
 
     // MARK: - Build
@@ -74,6 +89,8 @@ public struct AlterTable: Sendable {
             sql = "ALTER TABLE \(table.name) RENAME COLUMN \(old) TO \(new)"
         case .addColumn(let def):
             sql = "ALTER TABLE \(table.name) ADD COLUMN \(def.render())"
+        case .dropColumn(let name):
+            sql = "ALTER TABLE \(table.name) DROP COLUMN \(name)"
         }
         return BuiltQuery(sql: sql, bindings: [:])
     }
