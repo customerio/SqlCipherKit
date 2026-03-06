@@ -84,7 +84,7 @@ public struct ComplexColumnStrategy: Sendable {
                                 "ComplexColumnStrategy.json expected a TEXT column, got \(sqlValue)."
                         ))
                 }
-                return try _jsonDecode(type, data: data, using: decoder)
+                return try decoder.decode(type, from: data)
             }
         )
     }
@@ -134,13 +134,4 @@ private struct _EncodableBox: Encodable {
 
 private func _jsonEncode(_ value: any Encodable, using encoder: JSONEncoder) throws -> Data {
     try encoder.encode(_EncodableBox(base: value))
-}
-
-/// Swift 5.7+ implicitly opens `any Decodable.Type` when it is passed to a
-/// function whose parameter is `T.Type` with `T: Decodable`, so
-/// `JSONDecoder.decode(_:from:)` receives the concrete metatype.
-private func _jsonDecode<T: Decodable>(
-    _ type: T.Type, data: Data, using decoder: JSONDecoder
-) throws -> any Decodable {
-    try decoder.decode(type, from: data)
 }

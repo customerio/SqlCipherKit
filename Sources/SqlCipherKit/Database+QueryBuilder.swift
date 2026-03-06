@@ -1,9 +1,7 @@
 // MARK: - Database: QueryBuilder overloads
 //
-// Overloads for ``BuiltQuery``, ``Select``, ``Insert``, and ``Update``.
-// These bridge the typesafe builder layer to the underlying raw-SQL
-// execution path without exposing DDL to production code (DDL goes
-// through the Migration system only).
+// Overloads for ``BuiltQuery``, ``Select``, ``Insert``, ``Update``,
+// and DDL builders (``CreateTable``, ``AlterTable``, etc.).
 
 extension Database {
 
@@ -89,5 +87,32 @@ extension Database {
     /// Builds and executes an ``Update`` with variadic ``ParamBinding`` values.
     public func execute(_ update: Update, _ params: ParamBinding...) throws {
         try withConnection { try $0._execute(update.build(params: params)) }
+    }
+
+    // MARK: - DDL
+
+    /// Builds and executes a ``CreateTable`` statement.
+    public func execute(_ create: CreateTable) throws {
+        try withConnection { try $0._execute(create.build()) }
+    }
+
+    /// Builds and executes an ``AlterTable`` statement.
+    public func execute(_ alter: AlterTable) throws {
+        try withConnection { try $0._execute(alter.build()) }
+    }
+
+    /// Builds and executes a ``DropTable`` statement.
+    public func execute(_ drop: DropTable) throws {
+        try withConnection { try $0._execute(drop.build()) }
+    }
+
+    /// Builds and executes a ``CreateIndex`` statement.
+    public func execute(_ create: CreateIndex) throws {
+        try withConnection { try $0._execute(create.build()) }
+    }
+
+    /// Builds and executes a ``DropIndex`` statement.
+    public func execute(_ drop: DropIndex) throws {
+        try withConnection { try $0._execute(drop.build()) }
     }
 }
