@@ -1,0 +1,38 @@
+--swiftversion 6.0
+--exclude .build, Sources/CSqlCipher
+
+# Indentation
+--indent 4
+--tabwidth 4
+--smarttabs enabled
+--indentcase false
+
+# Line endings / whitespace
+--trimwhitespace always
+--linebreaks lf
+--maxwidth none
+
+# Blank lines
+--insertlines enabled
+--removelines enabled
+--emptybraces no-space
+--linebreakbeforebraces false
+
+# Imports
+--importgrouping testable-bottom
+
+# Closures / trailing syntax
+--trailingclosures enabled
+--stripunusedargs closure-only
+
+# Semicolons / redundant syntax
+--semicolons never
+--redundanttype inferred
+--redundantbackticks remove
+--redundantnil remove
+--redundantlet remove
+--redundantvoidreturntype closure
+
+# self
+--self remove
+--selfrequired

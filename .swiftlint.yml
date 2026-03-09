@@ -1,0 +1,18 @@
+# Rules: https://realm.github.io/SwiftLint/rule-directory.html
+
+disabled_rules:
+  - line_length             # swiftformat handles long lines; remaining violations are usually long strings.
+  - unused_optional_binding # `let _ =` can be clearer than `!= nil` in some contexts.
+  - nesting                 # Nested types (e.g. Codable CodingKeys) are often the right design.
+  - identifier_name         # Short names are sometimes appropriate; catch bad names in review instead.
+  - trailing_comma          # Trailing commas produce cleaner diffs.
+
+excluded:
+  - .build
+  - Package.swift
+  - Sources/CSqlCipher      # C amalgamation — not Swift source.
+
+cyclomatic_complexity:
+  ignores_case_statements: true
+
+reporter: "github-actions-logging"
