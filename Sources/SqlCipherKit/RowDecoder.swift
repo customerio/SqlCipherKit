@@ -43,7 +43,7 @@ import Foundation
 ///     as: User.self
 /// )
 /// ```
-public final class RowDecoder {
+public struct RowDecoder: Sendable {
 
     // MARK: - Date decoding strategy
 

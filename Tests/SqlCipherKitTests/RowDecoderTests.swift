@@ -186,7 +186,7 @@ struct RowDecoderDateTests {
 
     @Test("secondsSince1970 from real column")
     func secondsSince1970() throws {
-        let decoder = RowDecoder()
+        var decoder = RowDecoder()
         decoder.dateDecodingStrategy = .secondsSince1970
         let r = row(("ts", .real(Self.refDate.timeIntervalSince1970)))
         let result = try decoder.decode(W.self, from: r)
@@ -195,7 +195,7 @@ struct RowDecoderDateTests {
 
     @Test("secondsSince1970 from integer column")
     func secondsSince1970FromInt() throws {
-        let decoder = RowDecoder()
+        var decoder = RowDecoder()
         decoder.dateDecodingStrategy = .secondsSince1970
         let r = row(("ts", .integer(Int64(Self.refDate.timeIntervalSince1970))))
         let result = try decoder.decode(W.self, from: r)
@@ -204,7 +204,7 @@ struct RowDecoderDateTests {
 
     @Test("millisecondsSince1970 from real column")
     func milliseconds() throws {
-        let decoder = RowDecoder()
+        var decoder = RowDecoder()
         decoder.dateDecodingStrategy = .millisecondsSince1970
         let ms = Self.refDate.timeIntervalSince1970 * 1000
         let r = row(("ts", .real(ms)))
@@ -215,7 +215,7 @@ struct RowDecoderDateTests {
     @available(macOS 10.12, iOS 10.0, tvOS 10.0, watchOS 3.0, *)
     @Test("iso8601 text column")
     func iso8601() throws {
-        let decoder = RowDecoder()
+        var decoder = RowDecoder()
         decoder.dateDecodingStrategy = .iso8601
         let str = ISO8601DateFormatter().string(from: Self.refDate)
         let r = row(("ts", .text(str)))
@@ -228,7 +228,7 @@ struct RowDecoderDateTests {
         let fmt = DateFormatter()
         fmt.dateFormat = "yyyy-MM-dd"
         fmt.timeZone = TimeZone(identifier: "UTC")
-        let decoder = RowDecoder()
+        var decoder = RowDecoder()
         decoder.dateDecodingStrategy = .formatted(fmt)
         let r = row(("ts", .text("2024-03-15")))
         let result = try decoder.decode(W.self, from: r)
@@ -242,7 +242,7 @@ struct RowDecoderDateTests {
 
     @Test("custom strategy returns correct Date")
     func custom() throws {
-        let decoder = RowDecoder()
+        var decoder = RowDecoder()
         decoder.dateDecodingStrategy = .custom { value in
             guard case .integer(let i) = value else {
                 throw DecodingError.dataCorrupted(.init(codingPath: [], debugDescription: "bad"))
@@ -296,7 +296,7 @@ struct DateEpochTimezoneTests {
     @Test("stored 0 decodes as Unix epoch, not local midnight")
     func storedZeroIsUnixEpoch() throws {
         struct W: Decodable { let ts: Date }
-        let decoder = RowDecoder()
+        var decoder = RowDecoder()
         decoder.dateDecodingStrategy = .secondsSince1970
         let r = row(("ts", .real(0)))
         let result = try decoder.decode(W.self, from: r)
