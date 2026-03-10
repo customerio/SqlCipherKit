@@ -37,3 +37,6 @@
 # self
 --self remove
 --selfrequired
+
+# Disabled rules — avoid conflicts with test code and Sendable conformances
+--disable noForceUnwrapInTests,noForceTryInTests,redundantSendable
