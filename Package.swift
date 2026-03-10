@@ -9,7 +9,7 @@ let package = Package(
         .visionOS(.v1),
     ],
     products: [
-        .library(name: "SqlCipherKit", targets: ["SqlCipherKit"]),
+        .library(name: "SqlCipherKit", targets: ["SqlCipherKit"])
     ],
     targets: [
         // MARK: - C amalgamation target
@@ -27,10 +27,15 @@ let package = Package(
                 .define("SQLITE_THREADSAFE", to: "1"),
 
                 // Crypto provider — CommonCrypto on Apple, OpenSSL on Linux
-                .define("SQLCIPHER_CRYPTO_CC",
+                .define(
+                    "SQLCIPHER_CRYPTO_CC",
                     .when(platforms: [.macOS, .iOS, .visionOS])),
-                .define("SQLCIPHER_CRYPTO_OPENSSL",
+                .define(
+                    "SQLCIPHER_CRYPTO_OPENSSL",
                     .when(platforms: [.linux])),
+
+                // Let SQLite's amalgamation include <stdint.h> for uint64_t etc.
+                .define("HAVE_STDINT_H", to: "1"),
 
                 // Reduce binary size / build noise
                 .define("NDEBUG"),
@@ -38,10 +43,12 @@ let package = Package(
             ],
             linkerSettings: [
                 // CommonCrypto lives in the Security framework on Apple platforms
-                .linkedFramework("Security",
+                .linkedFramework(
+                    "Security",
                     .when(platforms: [.macOS, .iOS, .visionOS])),
                 // OpenSSL's crypto library on Linux (requires libssl-dev)
-                .linkedLibrary("crypto",
+                .linkedLibrary(
+                    "crypto",
                     .when(platforms: [.linux])),
             ]
         ),
@@ -52,7 +59,7 @@ let package = Package(
             dependencies: ["CSqlCipher"],
             path: "Sources/SqlCipherKit",
             swiftSettings: [
-                .swiftLanguageMode(.v6),
+                .swiftLanguageMode(.v6)
             ]
         ),
 
@@ -62,7 +69,7 @@ let package = Package(
             dependencies: ["SqlCipherKit"],
             path: "Tests/SqlCipherKitTests",
             swiftSettings: [
-                .swiftLanguageMode(.v6),
+                .swiftLanguageMode(.v6)
             ]
         ),
     ]

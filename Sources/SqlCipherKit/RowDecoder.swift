@@ -187,21 +187,25 @@ private struct _KeyedContainer<Key: CodingKey>: KeyedDecodingContainerProtocol {
 
         // Date
         if type == Date.self {
-            return try decodeDate(from: value, key: key) as! T
+            let date = try decodeDate(from: value, key: key)
+            guard let result = date as? T else { throw mismatch(key, expected: "Date", got: value) }
+            return result
         }
         // UUID from text
         if type == UUID.self {
             guard case .text(let s) = value, let uuid = UUID(uuidString: s) else {
                 throw mismatch(key, expected: "UUID string", got: value)
             }
-            return uuid as! T
+            guard let result = uuid as? T else { throw mismatch(key, expected: "UUID", got: value) }
+            return result
         }
         // Data from blob
         if type == Data.self {
             guard case .blob(let d) = value else {
                 throw mismatch(key, expected: "blob", got: value)
             }
-            return d as! T
+            guard let result = d as? T else { throw mismatch(key, expected: "Data", got: value) }
+            return result
         }
 
         // For TEXT and BLOB columns, try the complex column strategy first.
@@ -230,7 +234,8 @@ private struct _KeyedContainer<Key: CodingKey>: KeyedDecodingContainerProtocol {
     // MARK: Nested / super
 
     func nestedContainer<NK: CodingKey>(keyedBy type: NK.Type, forKey key: Key) throws
-        -> KeyedDecodingContainer<NK> {
+        -> KeyedDecodingContainer<NK>
+    {
         KeyedDecodingContainer(
             _KeyedContainer<NK>(
                 row: row, codingPath: codingPath + [key], dateStrategy: dateStrategy,
@@ -370,13 +375,15 @@ private struct _SingleValueContainer: SingleValueDecodingContainer {
         let v = try requireValue()
         if type == Data.self {
             guard case .blob(let d) = v else { throw mismatch("blob", got: v) }
-            return d as! T
+            guard let result = d as? T else { throw mismatch("Data", got: v) }
+            return result
         }
         if type == UUID.self {
             guard case .text(let s) = v, let uuid = UUID(uuidString: s) else {
                 throw mismatch("UUID", got: v)
             }
-            return uuid as! T
+            guard let result = uuid as? T else { throw mismatch("UUID", got: v) }
+            return result
         }
         // Fallback: let the type decode itself via a nested decoder.
         let decoder = _SingleValueDecoder(container: self)

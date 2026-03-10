@@ -1,0 +1,10 @@
+# Inherits root .swiftlint.yml rules; adds test-specific overrides.
+# SwiftLint merges nested configs: rules listed here are added to the
+# parent's disabled_rules for any file under Tests/.
+
+disabled_rules:
+  - file_length             # test files are intentionally longer than production files.
+  - function_body_length    # test functions often have many arrange/act/assert steps.
+  - type_body_length        # test suites accumulate many test cases by design.
+  - force_try               # try! is acceptable in test helpers; failures surface as test failures.
+  - force_unwrapping        # unwrapping with ! is acceptable in assertions and test setup.

@@ -4,7 +4,7 @@ disabled_rules:
   - line_length             # swiftformat handles long lines; remaining violations are usually long strings.
   - unused_optional_binding # `let _ =` can be clearer than `!= nil` in some contexts.
   - nesting                 # Nested types (e.g. Codable CodingKeys) are often the right design.
-  - identifier_name         # Short names are sometimes appropriate; catch bad names in review instead.
+  - identifier_name         # Underscore-prefixed SPI, short switch bindings, and keyword-avoiding suffixes are all idiomatic.
   - trailing_comma          # Trailing commas produce cleaner diffs.
 
 excluded:
@@ -14,5 +14,12 @@ excluded:
 
 cyclomatic_complexity:
   ignores_case_statements: true
+
+file_length:
+  warning: 600   # Connection, RowDecoder, RowEncoder are legitimately dense.
+  error: 1000
+
+type_name:
+  min_length: 1
 
 reporter: "github-actions-logging"

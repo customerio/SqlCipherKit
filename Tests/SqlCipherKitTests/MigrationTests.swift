@@ -8,7 +8,7 @@ import Testing
 // Each struct lives here in the test file the way real migrations would live
 // in their own dedicated files inside an app target.
 
-private struct M_CreateUsers: Migration {
+private struct CreateUsersMigration: Migration {
     let id = "001-create-users"
     func up(_ ctx: MigrationContext) throws {
         try ctx.execute(
@@ -23,7 +23,7 @@ private struct M_CreateUsers: Migration {
     }
 }
 
-private struct M_AddEmail: Migration {
+private struct AddEmailMigration: Migration {
     let id = "002-add-email"
     func up(_ ctx: MigrationContext) throws {
         try ctx.execute(AlterTable(TableName("users"), addColumn: "email", .text))
@@ -35,7 +35,7 @@ private struct M_AddEmail: Migration {
     }
 }
 
-private struct M_AddScore: Migration {
+private struct AddScoreMigration: Migration {
     let id = "003-add-score"
     func up(_ ctx: MigrationContext) throws {
         try ctx.execute(AlterTable(TableName("users"), addColumn: "score", .real, .default(0.0)))
@@ -45,7 +45,7 @@ private struct M_AddScore: Migration {
     }
 }
 
-private struct M_AddBio: Migration {
+private struct AddBioMigration: Migration {
     let id = "004-add-bio"
     func up(_ ctx: MigrationContext) throws {
         try ctx.execute(AlterTable(TableName("users"), addColumn: "bio", .text))
@@ -55,7 +55,7 @@ private struct M_AddBio: Migration {
     }
 }
 
-private struct M_CreateSettings: Migration {
+private struct CreateSettingsMigration: Migration {
     let id = "001-create-settings"
     func up(_ ctx: MigrationContext) throws {
         try ctx.execute(
@@ -69,7 +69,7 @@ private struct M_CreateSettings: Migration {
     }
 }
 
-private struct M_SeedSettings: Migration {
+private struct SeedSettingsMigration: Migration {
     let id = "002-seed-settings"
     let keyParam = Param<String>("key")
     let valueParam = Param<String>("value")
@@ -85,7 +85,7 @@ private struct M_SeedSettings: Migration {
     }
 }
 
-private struct M_CopyV1ToV2: Migration {
+private struct CopyV1ToV2Migration: Migration {
     let id = "001-copy-to-v2"
     func up(_ ctx: MigrationContext) throws {
         try ctx.execute("CREATE TABLE v2 (name TEXT, length INTEGER)")
@@ -103,7 +103,7 @@ private struct M_CopyV1ToV2: Migration {
 
 /// A migration whose `up` can be toggled to fail — uses a class so the flag
 /// is shared across @Sendable captures.
-private final class M_Transient: Migration, @unchecked Sendable {
+private final class TransientMigration: Migration, @unchecked Sendable {
     let id = "002-transient"
     var shouldFail: Bool
     init(shouldFail: Bool = true) { self.shouldFail = shouldFail }
@@ -115,7 +115,7 @@ private final class M_Transient: Migration, @unchecked Sendable {
 }
 
 /// A migration that counts how many times up() and down() are called.
-private final class M_Counted: Migration, @unchecked Sendable {
+private final class CountedMigration: Migration, @unchecked Sendable {
     let id = "001-counted"
     var upCount = 0
     var downCount = 0
@@ -134,7 +134,8 @@ private final class M_Counted: Migration, @unchecked Sendable {
 
 // MARK: - Helpers
 
-private func tempDB(_ label: String = "\(Int.random(in: 1_000_000...9_999_999))") throws -> Database {
+private func tempDB(_ label: String = "\(Int.random(in: 1_000_000...9_999_999))") throws -> Database
+{
     let path = NSTemporaryDirectory() + "migration_\(label).db"
     return try Database(path: path, key: "migration-test")
 }
@@ -171,7 +172,7 @@ struct MigrationTests {
     func singleMigration() async throws {
         let db = try tempDB()
 
-        try await db.migrate([M_CreateUsers()])
+        try await db.migrate([CreateUsersMigration()])
 
         let tableExists = try await db.scalarQuery(
             "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='users'",
@@ -189,10 +190,10 @@ struct MigrationTests {
         let db = try tempDB()
         let users = TableName("users")
 
-        // M_CreateUsers already creates email; M_AddScore and M_AddBio add columns.
-        let m1 = M_CreateUsers()
-        let m2 = M_AddScore()
-        let m3 = M_AddBio()
+        // CreateUsersMigration already creates email; AddScoreMigration and AddBioMigration add columns.
+        let m1 = CreateUsersMigration()
+        let m2 = AddScoreMigration()
+        let m3 = AddBioMigration()
 
         try await db.migrate([m1, m2, m3])
 
@@ -217,7 +218,7 @@ struct MigrationTests {
     @Test("already-applied migrations are skipped on second call")
     func secondCallIsIdempotent() async throws {
         let db = try tempDB()
-        let m1 = M_Counted()
+        let m1 = CountedMigration()
 
         try await db.migrate([m1])
         try await db.migrate([m1])  // second call: already applied, skip
@@ -230,8 +231,8 @@ struct MigrationTests {
     @Test("incremental: new migration added on second call")
     func incrementalMigration() async throws {
         let db = try tempDB()
-        let m1 = M_CreateUsers()
-        let m2 = M_AddBio()
+        let m1 = CreateUsersMigration()
+        let m2 = AddBioMigration()
 
         try await db.migrate([m1])
         try await db.migrate([m1, m2])  // m1 skipped, m2 applied
@@ -245,13 +246,13 @@ struct MigrationTests {
     @Test("failing migration rolls back and is not recorded")
     func failingMigrationRollsBack() async throws {
         let db = try tempDB()
-        let m1 = M_CreateUsers()
-        let m2 = M_Transient(shouldFail: true)
+        let m1 = CreateUsersMigration()
+        let m2 = TransientMigration(shouldFail: true)
 
         var didThrow = false
         do {
             try await db.migrate([m1, m2])
-        } catch is M_Transient.TransientError {
+        } catch is TransientMigration.TransientError {
             didThrow = true
         }
         #expect(didThrow, "Expected TransientError to propagate")
@@ -266,12 +267,12 @@ struct MigrationTests {
     @Test("migration can be retried after a prior failure")
     func retryAfterFailure() async throws {
         let db = try tempDB()
-        let m1 = M_CreateUsers()
-        let m2 = M_Transient(shouldFail: true)
+        let m1 = CreateUsersMigration()
+        let m2 = TransientMigration(shouldFail: true)
 
         // First attempt: m2 fails.
         var didThrow = false
-        do { try await db.migrate([m1, m2]) } catch is M_Transient.TransientError {
+        do { try await db.migrate([m1, m2]) } catch is TransientMigration.TransientError {
             didThrow = true
         }
         #expect(didThrow)
@@ -290,7 +291,7 @@ struct MigrationTests {
     func dmlInMigration() async throws {
         let db = try tempDB()
 
-        try await db.migrate([M_CreateSettings(), M_SeedSettings()])
+        try await db.migrate([CreateSettingsMigration(), SeedSettingsMigration()])
 
         let rows = try await db.query("SELECT key, value FROM settings ORDER BY key")
         #expect(rows.count == 2)
@@ -307,7 +308,7 @@ struct MigrationTests {
         try await db.execute("INSERT INTO v1 VALUES ('Alice')")
         try await db.execute("INSERT INTO v1 VALUES ('Bob')")
 
-        try await db.migrate([M_CopyV1ToV2()])
+        try await db.migrate([CopyV1ToV2Migration()])
 
         let rows = try await db.query("SELECT name, length FROM v2 ORDER BY name")
         #expect(rows.count == 2)
@@ -320,7 +321,7 @@ struct MigrationTests {
     @Test("applied_at is recorded as a non-empty text value")
     func appliedAtRecorded() async throws {
         let db = try tempDB()
-        try await db.migrate([M_CreateUsers()])
+        try await db.migrate([CreateUsersMigration()])
 
         let rows = try await db.query("SELECT id, applied_at FROM _migrations")
         #expect(rows.count == 1)
@@ -336,7 +337,7 @@ struct MigrationTests {
     @Test("rollback calls down and removes record")
     func rollbackSingle() async throws {
         let db = try tempDB()
-        let m1 = M_Counted()
+        let m1 = CountedMigration()
 
         try await db.migrate([m1])
         #expect(m1.downCount == 0)
@@ -357,8 +358,8 @@ struct MigrationTests {
     @Test("rollback to target reverses only migrations at or after target")
     func rollbackToTarget() async throws {
         let db = try tempDB()
-        let m1 = M_CreateSettings()
-        let m2 = M_SeedSettings()
+        let m1 = CreateSettingsMigration()
+        let m2 = SeedSettingsMigration()
 
         try await db.migrate([m1, m2])
 
@@ -387,8 +388,8 @@ struct MigrationTests {
     @Test("rollback to first migration removes all records")
     func rollbackAll() async throws {
         let db = try tempDB()
-        let m1 = M_CreateSettings()
-        let m2 = M_SeedSettings()
+        let m1 = CreateSettingsMigration()
+        let m2 = SeedSettingsMigration()
 
         try await db.migrate([m1, m2])
         try await db.rollback(to: m1.id, using: [m1, m2])
@@ -400,7 +401,7 @@ struct MigrationTests {
     @Test("rollback then migrate re-applies cleanly")
     func rollbackThenReApply() async throws {
         let db = try tempDB()
-        let m1 = M_Counted()
+        let m1 = CountedMigration()
 
         try await db.migrate([m1])
         try await db.rollback(to: m1.id, using: [m1])
@@ -418,11 +419,11 @@ struct MigrationTests {
     @Test("rollback throws MigrationError.targetNotFound for unknown ID")
     func rollbackUnknownIDThrows() async throws {
         let db = try tempDB()
-        try await db.migrate([M_CreateUsers()])
+        try await db.migrate([CreateUsersMigration()])
 
         var didThrow = false
         do {
-            try await db.rollback(to: "does-not-exist", using: [M_CreateUsers()])
+            try await db.rollback(to: "does-not-exist", using: [CreateUsersMigration()])
         } catch MigrationError.targetNotFound(let id) {
             #expect(id == "does-not-exist")
             didThrow = true
