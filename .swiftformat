@@ -17,6 +17,7 @@
 --removelines enabled
 --emptybraces no-space
 --linebreakbeforebraces false
+--allman false
 
 # Imports
 --importgrouping testable-bottom

@@ -6,6 +6,7 @@ disabled_rules:
   - nesting                 # Nested types (e.g. Codable CodingKeys) are often the right design.
   - identifier_name         # Underscore-prefixed SPI, short switch bindings, and keyword-avoiding suffixes are all idiomatic.
   - trailing_comma          # Trailing commas produce cleaner diffs.
+  - opening_brace           # Delegated to SwiftFormat (--allman false); the two tools can disagree on long signatures.
 
 excluded:
   - .build
