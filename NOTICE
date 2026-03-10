@@ -7,8 +7,8 @@ This repository contains Swift source code licensed under the MIT License.
 See the LICENSE file for details.
 
 
-SQLCipher Community Edition
-----------------------------
+SQLCipher Community Edition 4.13.0 (based on SQLite 3.51.2)
+-------------------------------------------------------------
 This repository includes the SQLCipher amalgamation source (Sources/CSqlCipher/sqlite3.c),
 which is distributed under the following BSD-style license:
 

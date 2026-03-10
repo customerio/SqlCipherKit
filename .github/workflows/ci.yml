@@ -31,12 +31,12 @@ jobs:
   # ── macOS ──────────────────────────────────────────────────────────────────
   test-macos:
     name: Test · macOS (${{ matrix.xcode }})
-    runs-on: macos-15
+    runs-on: macos-26
     strategy:
       fail-fast: false
       matrix:
         xcode:
-          - "16.3"   # Swift 6.2
+          - "26.0"   # Swift 6.2
     steps:
       - uses: actions/checkout@v4
 
