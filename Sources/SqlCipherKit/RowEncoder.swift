@@ -518,8 +518,7 @@ private struct _NullKeyedContainer<Key: CodingKey>: KeyedEncodingContainerProtoc
     mutating func encode(_ v: UInt64, forKey key: Key) throws {}
     mutating func encode<T: Encodable>(_ v: T, forKey key: Key) throws {}
     mutating func nestedContainer<NK: CodingKey>(keyedBy type: NK.Type, forKey key: Key)
-        -> KeyedEncodingContainer<NK>
-    { KeyedEncodingContainer(_NullKeyedContainer<NK>(codingPath: codingPath + [key])) }
+        -> KeyedEncodingContainer<NK> { KeyedEncodingContainer(_NullKeyedContainer<NK>(codingPath: codingPath + [key])) }
     mutating func nestedUnkeyedContainer(forKey key: Key) -> UnkeyedEncodingContainer {
         _ThrowingUnkeyedContainer(codingPath: codingPath + [key])
     }

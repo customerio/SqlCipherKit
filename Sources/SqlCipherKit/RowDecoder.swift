@@ -230,8 +230,7 @@ private struct _KeyedContainer<Key: CodingKey>: KeyedDecodingContainerProtocol {
     // MARK: Nested / super
 
     func nestedContainer<NK: CodingKey>(keyedBy type: NK.Type, forKey key: Key) throws
-        -> KeyedDecodingContainer<NK>
-    {
+        -> KeyedDecodingContainer<NK> {
         KeyedDecodingContainer(
             _KeyedContainer<NK>(
                 row: row, codingPath: codingPath + [key], dateStrategy: dateStrategy,

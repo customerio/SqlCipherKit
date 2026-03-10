@@ -31,8 +31,7 @@ public struct CreateTable: Sendable {
 
     /// Adds a column using individual constraint values.
     public func column(_ name: String, _ type: ColumnType, _ constraints: ColumnConstraint...)
-        -> CreateTable
-    {
+        -> CreateTable {
         var next = self
         next.columns.append(ColumnDefinition(name, type, constraints: constraints))
         return next

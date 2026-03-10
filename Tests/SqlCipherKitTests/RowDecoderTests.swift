@@ -535,7 +535,7 @@ struct RowDecoderIntegrationTests {
             }
         }
 
-        let decoder = RowDecoder()
+        var decoder = RowDecoder()
         if #available(macOS 10.12, iOS 10.0, tvOS 10.0, watchOS 3.0, *) {
             decoder.dateDecodingStrategy = .iso8601
         }

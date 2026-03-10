@@ -134,8 +134,7 @@ private final class M_Counted: Migration, @unchecked Sendable {
 
 // MARK: - Helpers
 
-private func tempDB(_ label: String = "\(Int.random(in: 1_000_000...9_999_999))") throws -> Database
-{
+private func tempDB(_ label: String = "\(Int.random(in: 1_000_000...9_999_999))") throws -> Database {
     let path = NSTemporaryDirectory() + "migration_\(label).db"
     return try Database(path: path, key: "migration-test")
 }

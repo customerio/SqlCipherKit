@@ -75,7 +75,7 @@ extension Database {
     ///
     /// - Parameter type: The `Entity` type to fetch.  Can be inferred from context.
     public func fetch<T: Entity>(_ type: T.Type = T.self) throws -> [T] {
-        let decoder = RowDecoder()
+        var decoder = RowDecoder()
         decoder.complexColumnStrategy = complexColumnStrategy
         let q = Select(.all).from(T.tableName).build()
         let rows = try withConnection { try $0._query(q) }
@@ -107,7 +107,7 @@ extension Database {
         where predicate: Expression,
         _ params: ParamBinding...
     ) throws -> [T] {
-        let decoder = RowDecoder()
+        var decoder = RowDecoder()
         decoder.complexColumnStrategy = complexColumnStrategy
         let q = Select(.all).from(T.tableName).where(predicate).build(params: params)
         let rows = try withConnection { try $0._query(q) }
@@ -126,7 +126,7 @@ extension Database {
     ///   - type: The `Entity` type to fetch.  Can be inferred from context.
     ///   - id:   The primary key value to look up.
     public func fetchOne<T: Entity>(_ type: T.Type = T.self, id: T.ID) throws -> T? {
-        let decoder = RowDecoder()
+        var decoder = RowDecoder()
         decoder.complexColumnStrategy = complexColumnStrategy
         let predicate = Expression.compare(ColumnRef(T.primaryKeyName), .eq, .literal(id))
         let q = Select(.all).from(T.tableName).where(predicate).limit(1).build()

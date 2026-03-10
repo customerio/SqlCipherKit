@@ -148,8 +148,7 @@ private enum StatementHandle {
     }
 
     static func prepare(sql: String, db: OpaquePointer, cache: StatementCache) throws
-        -> StatementHandle
-    {
+        -> StatementHandle {
         if let p = try cache.cachedStatement(for: sql) { return .cached(p) }
         var stmt: OpaquePointer?
         let rc = sqlite3_prepare_v2(db, sql, -1, &stmt, nil)
@@ -186,13 +185,6 @@ public struct Connection: ~Copyable {
     let db: OpaquePointer
     /// Shared statement cache, owned by the surrounding `Database` actor.
     let cache: StatementCache
-
-    // MARK: - Init (internal only)
-
-    init(db: OpaquePointer, cache: StatementCache) {
-        self.db = db
-        self.cache = cache
-    }
 
     // MARK: - Execute (write / DDL)
 
@@ -306,8 +298,7 @@ extension Connection {
 
     /// Executes a pre-built query and returns the first column of the first row.
     public func scalarQuery<T: SQLConvertible>(_ query: BuiltQuery, as type: T.Type = T.self) throws
-        -> T?
-    {
+        -> T? {
         try _scalarQuery(query, as: T.self)
     }
 
@@ -331,8 +322,7 @@ extension Connection {
         return try collectRows(stmt.pointer, sql: query.sql)
     }
 
-    func _scalarQuery<T: SQLConvertible>(_ query: BuiltQuery, as type: T.Type = T.self) throws -> T?
-    {
+    func _scalarQuery<T: SQLConvertible>(_ query: BuiltQuery, as type: T.Type = T.self) throws -> T? {
         let stmt = try StatementHandle.prepare(sql: query.sql, db: db, cache: cache)
         defer { stmt.done() }
         try bindNamed(stmt.pointer, query.bindings)

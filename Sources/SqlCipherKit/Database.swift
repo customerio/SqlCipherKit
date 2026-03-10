@@ -137,8 +137,7 @@ public actor Database {
             // We execute it and discard the result — any failure here is
             // non-fatal (e.g. read-only filesystem), so we don't throw.
             var walStmt: OpaquePointer?
-            if sqlite3_prepare_v2(opened, "PRAGMA journal_mode=WAL", -1, &walStmt, nil) == SQLITE_OK
-            {
+            if sqlite3_prepare_v2(opened, "PRAGMA journal_mode=WAL", -1, &walStmt, nil) == SQLITE_OK {
                 sqlite3_step(walStmt)
             }
             if let s = walStmt { sqlite3_finalize(s) }
