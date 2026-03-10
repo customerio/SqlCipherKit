@@ -2,7 +2,7 @@
 
 SqlCipherKit is a Swift wrapper around [SQLCipher](https://www.zetetic.net/sqlcipher/), providing an actor-isolated, encrypted SQLite database with lightweight ORM-like persistence and a composable query-builder API. It does not aim to be a full-featured ORM; instead it offers a thin, type-safe layer for common patterns — raw SQL execution, fluent SELECT/UPDATE/INSERT builders, and a `Codable`-backed `Entity` protocol for straightforward table mapping.
 
-On Apple platforms (**macOS 14+, iOS 17+, visionOS 1+**) the library uses Apple's **CommonCrypto** framework as the cryptographic backend for SQLCipher, which requires no additional dependencies. On **Linux**, the OpenSSL crypto backend is used instead, which requires `libcrypto` to be available on the build machine (typically provided by `libssl-dev` on Debian/Ubuntu or `openssl-devel` on Fedora/RHEL).
+On Apple platforms (**macOS 10.15+, iOS 13+, visionOS 1+**) the library uses Apple's **CommonCrypto** framework as the cryptographic backend for SQLCipher, which requires no additional dependencies. On **Linux**, the OpenSSL crypto backend is used instead, which requires `libcrypto` to be available on the build machine (typically provided by `libssl-dev` on Debian/Ubuntu or `openssl-devel` on Fedora/RHEL).
 
 ---
 
@@ -10,8 +10,8 @@ On Apple platforms (**macOS 14+, iOS 17+, visionOS 1+**) the library uses Apple'
 
 | Platform | Minimum Version | Crypto backend | System prerequisite |
 |---|---|---|---|
-| macOS | 14 | CommonCrypto | None |
-| iOS | 17 | CommonCrypto | None |
+| macOS | 10.15 | CommonCrypto | None |
+| iOS | 13 | CommonCrypto | None |
 | visionOS | 1 | CommonCrypto | None |
 | Linux | — | OpenSSL | `libssl-dev` / `openssl-devel` |
 

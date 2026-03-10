@@ -54,6 +54,14 @@ jobs:
             --ignore-filename-regex=".build|CSqlCipher" \
             --summary-only
 
+      - name: Build for iOS (deployment target check)
+        run: |
+          xcodebuild build \
+            -scheme SqlCipherKit \
+            -destination 'generic/platform=iOS' \
+            SWIFT_STRICT_CONCURRENCY=complete \
+            | xcpretty || true
+
   # ── Linux ──────────────────────────────────────────────────────────────────
   test-linux:
     name: Test · Linux (Swift ${{ matrix.swift }})

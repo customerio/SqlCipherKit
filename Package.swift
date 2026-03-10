@@ -4,8 +4,8 @@ import PackageDescription
 let package = Package(
     name: "SqlCipherKit",
     platforms: [
-        .macOS(.v14),
-        .iOS(.v17),
+        .macOS(.v10_15),
+        .iOS(.v13),
         .visionOS(.v1),
     ],
     products: [
