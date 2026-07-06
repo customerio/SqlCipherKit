@@ -19,7 +19,7 @@ jobs:
       - uses: actions/checkout@v6
 
       - name: SwiftFormat
-        uses: nicklockwood/SwiftFormat@0.61.0
+        uses: nicklockwood/SwiftFormat@0.62.0
         with:
           args: --lint
 
