@@ -60,8 +60,8 @@ struct StatementCacheTests {
 
     @Test("PRAGMA statements are not cached and still execute correctly")
     func pragmaNotCached() async throws {
-        // Open without WAL so we start in delete mode.
-        let db = try Database(path: tempDBPath(), key: "k", walMode: false)
+        // Create in rollback mode so we start in delete mode.
+        let db = try Database(path: tempDBPath(), key: "k", journalMode: .rollback)
         // Running the same PRAGMA multiple times must always return fresh results.
         let m1 = try await db.scalarQuery("PRAGMA journal_mode", as: String.self)
         let m2 = try await db.scalarQuery("PRAGMA journal_mode", as: String.self)

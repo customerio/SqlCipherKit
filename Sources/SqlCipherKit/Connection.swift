@@ -185,6 +185,18 @@ public struct Connection: ~Copyable {
     let db: OpaquePointer
     /// Shared statement cache, owned by the surrounding `Database` actor.
     let cache: StatementCache
+    /// Strategy for non-scalar entity properties; see ``Database/complexColumnStrategy``.
+    let complexColumnStrategy: ComplexColumnStrategy?
+
+    init(
+        db: OpaquePointer,
+        cache: StatementCache,
+        complexColumnStrategy: ComplexColumnStrategy? = .json
+    ) {
+        self.db = db
+        self.cache = cache
+        self.complexColumnStrategy = complexColumnStrategy
+    }
 
     // MARK: - Execute (write / DDL)
 

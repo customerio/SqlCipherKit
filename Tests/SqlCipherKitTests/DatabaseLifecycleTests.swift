@@ -20,9 +20,9 @@ struct DatabaseLifecycleTests {
         #expect(mode == "wal")
     }
 
-    @Test("Respects walMode: false")
+    @Test("Creates a rollback-journal database on request")
     func walModeDisabled() async throws {
-        let db = try Database(path: tempDBPath(), key: "testkey", walMode: false)
+        let db = try Database(path: tempDBPath(), key: "testkey", journalMode: .rollback)
         let mode = try await db.scalarQuery("PRAGMA journal_mode", as: String.self)
         #expect(mode == "delete")
     }

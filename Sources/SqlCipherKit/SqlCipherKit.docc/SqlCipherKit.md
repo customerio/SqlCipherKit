@@ -8,9 +8,9 @@ SqlCipherKit wraps [SQLCipher](https://www.zetetic.net/sqlcipher/) — an AES-25
 
 Key capabilities:
 
-- **Encrypted by default.** Every database file is encrypted at rest with a key you supply at open-time.
+- **Encrypted by default.** Every database file is encrypted at rest with a passphrase or a 32-byte raw key you supply at open-time. Plain SQLite files are available through a separate, explicit initialiser.
 - **Actor isolation.** The ``Database`` actor serialises all access, making it safe to call from any `async` context without additional locking.
-- **`Entity` persistence.** Conform your `Codable` models to ``Entity`` and get automatic INSERT, UPDATE, DELETE, and SELECT helpers with zero boilerplate.
+- **`Entity` persistence.** Conform your `Codable` models to ``Entity`` and get automatic INSERT, UPDATE, DELETE, and SELECT helpers with zero boilerplate, usable on their own or together inside ``Database/transaction(_:)``.
 - **Composable query builders.** Construct type-safe `SELECT`, `UPDATE`, `INSERT`, `CREATE TABLE`, and schema-alteration statements programmatically.
 - **Migrations.** Drive schema evolution with the ``Migration`` protocol and ``MigrationContext``.
 - **No external dependencies on Apple platforms.** Uses CommonCrypto (bundled with the OS) as the SQLCipher crypto backend.
@@ -20,6 +20,7 @@ Key capabilities:
 ### Getting Started
 
 - ``Database``
+- ``Connection``
 - ``Entity``
 - ``Migration``
 
@@ -45,6 +46,7 @@ Key capabilities:
 
 ### Configuration
 
+- ``JournalMode``
 - ``ComplexColumnStrategy``
 
 ### Errors

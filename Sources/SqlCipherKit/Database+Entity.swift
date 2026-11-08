@@ -1,8 +1,14 @@
 import Foundation
 
 // MARK: - Database: Entity persistence
+//
+// One-shot entity operations.  Each forwards to the ``Connection`` method of
+// the same name; to combine several in one transaction, call those methods
+// inside ``Database/transaction(_:)`` instead.
 
 extension Database {
+
+    // MARK: - Save
 
     /// Saves a single `Entity` to the database and returns the (possibly updated) record.
     ///
@@ -31,14 +37,14 @@ extension Database {
     /// - Throws: ``EntityError`` or ``SqlCipherError``.
     @discardableResult
     public func save<T: Entity>(_ record: T) throws -> T {
-        try _save(record)
+        try withConnection { try $0.save(record) }
     }
 
-    /// Saves an array of `Entity` values inside a single transaction.
+    /// Saves an array of `Entity` values atomically.
     ///
-    /// All records are saved atomically: if any one fails the entire batch is
-    /// rolled back.  The returned array has the same order as the input, with
-    /// auto-increment primary keys filled in where applicable.
+    /// If any one record fails the entire batch is rolled back.  The returned
+    /// array has the same order as the input, with auto-increment primary keys
+    /// filled in where applicable.
     ///
     /// ```swift
     /// let saved = try await db.save([alice, bob, carol])
@@ -49,20 +55,7 @@ extension Database {
     /// - Throws: ``EntityError`` or ``SqlCipherError``.
     @discardableResult
     public func save<T: Entity>(_ records: [T]) throws -> [T] {
-        guard !records.isEmpty else { return [] }
-        try execute("BEGIN")
-        var results: [T] = []
-        results.reserveCapacity(records.count)
-        do {
-            for record in records {
-                results.append(try _save(record))
-            }
-            try execute("COMMIT")
-        } catch {
-            try? execute("ROLLBACK")
-            throw error
-        }
-        return results
+        try withConnection { try $0.save(records) }
     }
 
     // MARK: - Fetch
@@ -75,11 +68,7 @@ extension Database {
     ///
     /// - Parameter type: The `Entity` type to fetch.  Can be inferred from context.
     public func fetch<T: Entity>(_ type: T.Type = T.self) throws -> [T] {
-        var decoder = RowDecoder()
-        decoder.complexColumnStrategy = complexColumnStrategy
-        let q = Select(.all).from(T.tableName).build()
-        let rows = try withConnection { try $0._query(q) }
-        return try decoder.decode(T.self, from: rows)
+        try withConnection { try $0.fetch(T.self) }
     }
 
     /// Fetches rows matching `predicate` from `T`'s table.
@@ -107,11 +96,7 @@ extension Database {
         where predicate: Expression,
         _ params: ParamBinding...
     ) throws -> [T] {
-        var decoder = RowDecoder()
-        decoder.complexColumnStrategy = complexColumnStrategy
-        let q = Select(.all).from(T.tableName).where(predicate).build(params: params)
-        let rows = try withConnection { try $0._query(q) }
-        return try decoder.decode(T.self, from: rows)
+        try withConnection { try $0._fetch(T.self, where: predicate, params: params) }
     }
 
     /// Fetches the single row whose primary key equals `id`, or `nil` if absent.
@@ -126,92 +111,83 @@ extension Database {
     ///   - type: The `Entity` type to fetch.  Can be inferred from context.
     ///   - id:   The primary key value to look up.
     public func fetchOne<T: Entity>(_ type: T.Type = T.self, id: T.ID) throws -> T? {
-        var decoder = RowDecoder()
-        decoder.complexColumnStrategy = complexColumnStrategy
-        let predicate = Expression.compare(ColumnRef(T.primaryKeyName), .eq, .literal(id))
-        let q = Select(.all).from(T.tableName).where(predicate).limit(1).build()
-        let rows = try withConnection { try $0._query(q) }
-        let decoded = try decoder.decode(T.self, from: rows)
-        return decoded.first
+        try withConnection { try $0.fetchOne(T.self, id: id) }
     }
 
-    // MARK: - Private core
+    // MARK: - Delete
 
-    private func _save<T: Entity>(_ record: T) throws -> T {
-        let encoder = RowEncoder()
-        encoder.complexColumnStrategy = complexColumnStrategy
-        let columns = try encoder.encode(record)
-
-        guard !columns.isEmpty else { throw EntityError.noColumnsToInsert }
-
-        let pkName = T.primaryKeyName
-        let pkValue = record[keyPath: T.primaryKey].sqlValue
-
-        switch pkValue {
-        case .null:
-            return try _insertAutoIncrement(record, columns: columns, pkName: pkName)
-        default:
-            return try _upsert(record, columns: columns, pkName: pkName)
-        }
+    /// Deletes the row whose primary key equals `id`.
+    ///
+    /// ```swift
+    /// try await db.delete(Widget.self, id: 42)
+    /// ```
+    ///
+    /// - Returns: The number of rows deleted (0 or 1).
+    @discardableResult
+    public func delete<T: Entity>(_ type: T.Type, id: T.ID) throws -> Int {
+        try withConnection { try $0.delete(T.self, id: id) }
     }
 
-    /// INSERT without the PK column; write the assigned rowid back to the copy.
-    private func _insertAutoIncrement<T: Entity>(
-        _ record: T,
-        columns: [(key: String, value: Value)],
-        pkName: String
-    ) throws -> T {
-        let insertCols = columns.filter { $0.key != pkName }
-        guard !insertCols.isEmpty else { throw EntityError.noColumnsToInsert }
-
-        let colList = insertCols.map { "\"\($0.key)\"" }.joined(separator: ", ")
-        let placeholders = Array(repeating: "?", count: insertCols.count).joined(separator: ", ")
-        let sql = "INSERT INTO \"\(T.tableName.name)\" (\(colList)) VALUES (\(placeholders))"
-        let bindings = insertCols.map { $0.value as any SQLConvertible }
-
-        try withConnection { try $0._execute(sql, bindings: bindings) }
-
-        var copy = record
-        let rowid: Int64? = try withConnection {
-            try $0._scalarQuery("SELECT last_insert_rowid()", bindings: [], as: Int64.self)
-        }
-        if let rowid, let assigned = T.ID.from(sqlValue: .integer(rowid)) {
-            copy[keyPath: T.primaryKey] = assigned
-        }
-        return copy
+    /// Deletes every row from `T`'s table matching `predicate`.
+    ///
+    /// ```swift
+    /// let removed = try await db.delete(Widget.self, where: col("price") < 1.0)
+    /// ```
+    ///
+    /// - Parameters:
+    ///   - type:      The `Entity` type whose table to delete from.
+    ///   - predicate: A WHERE ``Expression``.
+    ///   - params:    Variadic ``ParamBinding`` values for any ``Param`` references in `predicate`.
+    /// - Returns: The number of rows deleted.
+    @discardableResult
+    public func delete<T: Entity>(
+        _ type: T.Type,
+        where predicate: Expression,
+        _ params: ParamBinding...
+    ) throws -> Int {
+        try withConnection { try $0._delete(T.self, where: predicate, params: params) }
     }
 
-    /// INSERT … ON CONFLICT(pk) DO UPDATE SET …  (true upsert).
-    private func _upsert<T: Entity>(
-        _ record: T,
-        columns: [(key: String, value: Value)],
-        pkName: String
-    ) throws -> T {
-        let updateCols = columns.filter { $0.key != pkName }
+    // MARK: - Transactions
 
-        let colList = columns.map { "\"\($0.key)\"" }.joined(separator: ", ")
-        let placeholders = Array(repeating: "?", count: columns.count).joined(separator: ", ")
-        let bindings = columns.map { $0.value as any SQLConvertible }
-
-        let sql: String
-        if updateCols.isEmpty {
-            // Only a PK column — treat as idempotent insert.
-            sql =
-                "INSERT OR IGNORE INTO \"\(T.tableName.name)\" (\(colList)) VALUES (\(placeholders))"
-        } else {
-            let setClause =
-                updateCols
-                .map { "\"\($0.key)\" = excluded.\"\($0.key)\"" }
-                .joined(separator: ",\n    ")
-            sql = """
-                INSERT INTO "\(T.tableName.name)" (\(colList))
-                VALUES (\(placeholders))
-                ON CONFLICT("\(pkName)") DO UPDATE SET
-                    \(setClause)
-                """
+    /// Runs `body` inside a transaction, committing when it returns and
+    /// rolling back if it throws.
+    ///
+    /// Every ``Connection`` method is available inside the body, including the
+    /// entity operations, so raw SQL, query builders, and entities can be
+    /// combined atomically:
+    ///
+    /// ```swift
+    /// let order = try await db.transaction { conn in
+    ///     let order = try conn.save(Order(id: nil, customer: "Alice"))
+    ///     try conn.save(items.map { LineItem(id: nil, orderID: order.id!, sku: $0) })
+    ///     try conn.execute("UPDATE customers SET orders = orders + 1 WHERE name = ?", "Alice")
+    ///     return order
+    /// }
+    /// ```
+    ///
+    /// Reads inside the body see the body's own uncommitted writes.  The body
+    /// is synchronous and runs on the actor, so no other operation on this
+    /// `Database` can interleave with it.  Do not issue `BEGIN`, `COMMIT`, or
+    /// `ROLLBACK` inside the body; use ``Connection/savepoint(_:)`` for a
+    /// nested, independently undoable step.
+    ///
+    /// - Parameter body: The work to perform atomically.
+    /// - Returns: Whatever `body` returns.
+    /// - Throws: Any error thrown by `body` (after rolling back), or a
+    ///   ``SqlCipherError`` if the transaction cannot begin or commit.
+    @discardableResult
+    public func transaction<R>(_ body: (borrowing Connection) throws -> R) throws -> R {
+        try withConnection { conn in
+            try conn._execute("BEGIN", bindings: [])
+            do {
+                let result = try body(conn)
+                try conn._execute("COMMIT", bindings: [])
+                return result
+            } catch {
+                try? conn._execute("ROLLBACK", bindings: [])
+                throw error
+            }
         }
-
-        try withConnection { try $0._execute(sql, bindings: bindings) }
-        return record  // PK was already set; copy is identical to input
     }
 }

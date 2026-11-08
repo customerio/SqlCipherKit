@@ -55,6 +55,37 @@ let db = try Database(path: "/path/to/store.db", key: "my-passphrase")
 
 `Database` is a Swift actor, so all of its methods are called with `try await` when invoked from an async context.
 
+An empty passphrase is rejected: SQLCipher treats an empty key as "no encryption", so plaintext is never produced by accident. Use the unencrypted initialiser below when plaintext is what you want.
+
+### Raw keys
+
+When you already hold a full-entropy 32-byte key (for example the output of a KDF you run yourself, or a key stored in the Keychain), pass it as `Data`. SQLCipher uses it directly and skips its own PBKDF2 stretching, so opening costs no key derivation. A database created with a raw key cannot be opened with a passphrase, or the reverse.
+
+```swift
+let key: Data = ...  // exactly 32 bytes
+let db = try Database(path: "/path/to/store.db", rawKey: key)
+try await db.rekey(rawKey: newKey)   // or db.rekey("a passphrase")
+```
+
+### Unencrypted databases
+
+For data that is public or already ciphertext, `Database` can manage a plain SQLite file with the same API. No key is applied, the file is readable by any SQLite tool, `isEncrypted` is `false`, and `rekey` throws.
+
+```swift
+let db = try Database(unencryptedPath: "/path/to/public.db")
+```
+
+Opening an encrypted file this way throws `SqlCipherError.notPlaintextDatabase`; opening an unencrypted file with a key throws `SqlCipherError.keyFailed`.
+
+### Journal mode
+
+New databases use WAL by default. Pass `.rollback` for files that must stay a single file whenever no transaction is running, such as files copied between media, backed up as opaque blobs, or opened from read-only storage. The mode is fixed when the database is created: opening an existing file keeps its mode, whatever you pass, and `db.journalMode` reports the mode the file is in.
+
+```swift
+let db = try Database(path: "/path/to/store.db", key: "my-passphrase", journalMode: .rollback)
+let pub = try Database(unencryptedPath: "/path/to/public.db", journalMode: .rollback)
+```
+
 ### Raw SQL
 
 For straightforward one-shot statements, pass SQL directly with `?` positional placeholders:
@@ -153,7 +184,28 @@ let affordable = try await db.fetch(
 if let found = try await db.fetchOne(Product.self, id: 1) {
     print(found.name)
 }
+
+// Delete by primary key, or by predicate; both return the number of rows deleted
+try await db.delete(Product.self, id: 1)
+try await db.delete(Product.self, where: col("price") > 100.0)
 ```
+
+Saving an array (`db.save([a, b, c])`) is atomic: if one record fails, none are saved.
+
+### Transactions
+
+`transaction` runs a synchronous body inside `BEGIN` … `COMMIT`, rolling back if the body throws. The `Connection` it passes has the same raw-SQL, query-builder, and entity methods as `Database`, so they can all be combined atomically. Reads inside the body see its own uncommitted writes.
+
+```swift
+let order = try await db.transaction { conn in
+    let order = try conn.save(Order(id: nil, customer: "Alice"))
+    try conn.save(skus.map { LineItem(id: nil, orderID: order.id!, sku: $0) })
+    try conn.execute("UPDATE customers SET orders = orders + 1 WHERE name = ?", "Alice")
+    return order
+}
+```
+
+Use `conn.savepoint { ... }` inside a transaction for a step that can fail and be undone without abandoning the rest. A batch `save([...])` already uses a savepoint, so it nests safely inside a transaction.
 
 ---
 
